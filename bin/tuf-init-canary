@@ -6,7 +6,8 @@ if [[ $EUID -ne 0 ]]; then
   exit 77
 fi
 
-readonly repo_dir=$(/usr/bin/readlink -f "$(/usr/bin/dirname "$0")/..")
+repo_dir=$(/usr/bin/readlink -f "$(/usr/bin/dirname "$0")/..")
+readonly repo_dir
 readonly source_dir=$repo_dir/config/canary
 readonly production_dir=/srv/tuf/config
 readonly target_dir=/srv/tuf/config/canary
