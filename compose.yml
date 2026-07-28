@@ -1,4 +1,4 @@
-name: tuf
+name: ${TUF_COMPOSE_PROJECT_NAME:-tuf}
 
 x-backend-service: &backend-service
   image: ghcr.io/t21c/tuf-backend:${TUF_BACKEND_IMAGE_TAG:?set TUF_BACKEND_IMAGE_TAG in stack.env}
@@ -15,7 +15,7 @@ x-backend-service: &backend-service
   tmpfs:
     - /tmp:rw,nosuid,nodev,size=512m,uid=${TUF_RUNTIME_UID:-10001},gid=${TUF_RUNTIME_GID:-10001},mode=1770
   env_file:
-    - /srv/tuf/config/common.env
+    - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
   environment:
     NODE_ENV: production
   logging:
@@ -33,7 +33,7 @@ services:
     restart: unless-stopped
     stop_grace_period: 15s
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${TUF_FRONTEND_HOST_PORT:-8080}:8080"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -58,23 +58,23 @@ services:
     <<: *backend-service
     command: ["node", "dist/app.js"]
     env_file:
-      - /srv/tuf/config/common.env
-      - /srv/tuf/config/redis.env
-      - /srv/tuf/config/storage.env
-      - /srv/tuf/config/api.env
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/redis.env
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/storage.env
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/api.env
     volumes:
-      - /srv/tuf/data/cache:/srv/tuf/data/cache
-      - /srv/tuf/data/thumbnails:/srv/tuf/data/thumbnails
-      - /srv/tuf/data/logs:/srv/tuf/data/logs
-      - /srv/tuf/data/cdn-temp:/srv/tuf/data/cdn-temp
-      - /srv/tuf/data/backups:/srv/tuf/data/backups
-      - /srv/tuf/data/mapping-hashes:/app/mapping-hashes
-      - /srv/tuf/config/certs/elasticsearch.crt:/run/secrets/elasticsearch-ca.crt:ro
+      - ${TUF_DATA_ROOT:-/srv/tuf/data}/cache:/srv/tuf/data/cache
+      - ${TUF_DATA_ROOT:-/srv/tuf/data}/thumbnails:/srv/tuf/data/thumbnails
+      - ${TUF_DATA_ROOT:-/srv/tuf/data}/logs:/srv/tuf/data/logs
+      - ${TUF_DATA_ROOT:-/srv/tuf/data}/cdn-temp:/srv/tuf/data/cdn-temp
+      - ${TUF_DATA_ROOT:-/srv/tuf/data}/backups:/srv/tuf/data/backups
+      - ${TUF_DATA_ROOT:-/srv/tuf/data}/mapping-hashes:/app/mapping-hashes
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/certs/elasticsearch.crt:/run/secrets/elasticsearch-ca.crt:ro
     depends_on:
       frontend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/v2/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.PROD_PORT||process.env.PORT||3000)+'/v2/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 8
@@ -86,14 +86,14 @@ services:
     <<: *backend-service
     command: ["node", "dist/externalServices/cdnService/app.js"]
     env_file:
-      - /srv/tuf/config/common.env
-      - /srv/tuf/config/storage.env
-      - /srv/tuf/config/cdn.env
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/storage.env
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/cdn.env
     volumes:
-      - /srv/tuf/data/cdn-temp:/srv/tuf/data/cdn-temp
-      - /srv/tuf/data/logs:/srv/tuf/data/logs
+      - ${TUF_DATA_ROOT:-/srv/tuf/data}/cdn-temp:/srv/tuf/data/cdn-temp
+      - ${TUF_DATA_ROOT:-/srv/tuf/data}/logs:/srv/tuf/data/logs
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.CDN_PORT||3001)+'/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 8
@@ -105,11 +105,11 @@ services:
     <<: *backend-service
     command: ["node", "dist/externalServices/cdcService/app.js"]
     env_file:
-      - /srv/tuf/config/common.env
-      - /srv/tuf/config/redis.env
-      - /srv/tuf/config/cdc.env
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/redis.env
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/cdc.env
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3990/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.CDC_HEALTH_PORT||3990)+'/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 8
@@ -121,17 +121,15 @@ services:
     <<: *backend-service
     command: ["node", "dist/externalServices/healthService/startHealthService.js"]
     env_file:
-      - /srv/tuf/config/common.env
-      - /srv/tuf/config/health.env
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/health.env
     depends_on:
       api:
         condition: service_healthy
       cdn:
         condition: service_healthy
-      cdc:
-        condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3883/health/api').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.HEALTH_PORT||3883)+'/health/api').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 8

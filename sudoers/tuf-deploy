@@ -1,2 +1,2 @@
-Cmnd_Alias TUF_DEPLOY = /usr/local/sbin/tuf-deploy-backend *, /usr/local/sbin/tuf-deploy-frontend *
+Cmnd_Alias TUF_DEPLOY = /usr/local/sbin/tuf-deploy-backend *, /usr/local/sbin/tuf-deploy-frontend *, /usr/local/sbin/tuf-deploy-canary *
 tuf-deploy ALL=(root) NOPASSWD: TUF_DEPLOY

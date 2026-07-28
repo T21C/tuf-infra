@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly production_dir=/srv/tuf/config
+readonly canary_dir=/srv/tuf/config/canary
+readonly names=(stack common redis storage api cdn cdc health)
+
+errors=0
+
+fail() {
+  echo "error: $*" >&2
+  errors=$((errors + 1))
+}
+
+value_of() {
+  local file=$1 key=$2 line
+  line=$(/usr/bin/grep -m1 -E "^${key}=" "$file" || true)
+  /usr/bin/printf '%s' "${line#*=}"
+}
+
+for name in "${names[@]}"; do
+  file="$canary_dir/$name.env"
+  [[ -f $file ]] || {
+    fail "missing canary config: $file"
+    continue
+  }
+  if /usr/bin/grep -qE '__REQUIRED__|replace-with-git-sha' "$file"; then
+    fail "$file still contains placeholders"
+  fi
+  permissions=$(/usr/bin/stat -c '%a' "$file")
+  (( permissions % 10 == 0 )) || fail "$file must not be world-readable"
+done
+
+compare_different() {
+  local production_file=$1 canary_file=$2 key=$3
+  local production_value canary_value
+  production_value=$(value_of "$production_file" "$key")
+  canary_value=$(value_of "$canary_file" "$key")
+  [[ -n $canary_value ]] || {
+    fail "$canary_file requires $key"
+    return
+  }
+  [[ $production_value != "$canary_value" ]] || fail "$key must differ between production and canary"
+}
+
+compare_different "$production_dir/common.env" "$canary_dir/common.env" DB_DATABASE
+compare_different "$production_dir/redis.env" "$canary_dir/redis.env" REDIS_URL
+compare_different "$production_dir/storage.env" "$canary_dir/storage.env" CF_BUCKET
+compare_different "$production_dir/storage.env" "$canary_dir/storage.env" CF_BACKUP_BUCKET
+compare_different "$production_dir/api.env" "$canary_dir/api.env" PROD_PORT
+compare_different "$production_dir/cdn.env" "$canary_dir/cdn.env" CDN_PORT
+compare_different "$production_dir/cdc.env" "$canary_dir/cdc.env" CDC_HEALTH_PORT
+compare_different "$production_dir/health.env" "$canary_dir/health.env" HEALTH_PORT
+compare_different "$production_dir/stack.env" "$canary_dir/stack.env" TUF_COMPOSE_PROJECT_NAME
+compare_different "$production_dir/stack.env" "$canary_dir/stack.env" TUF_DATA_ROOT
+compare_different "$production_dir/stack.env" "$canary_dir/stack.env" TUF_FRONTEND_HOST_PORT
+
+for file_and_key in \
+  "$canary_dir/api.env:BIND_ADDRESS" \
+  "$canary_dir/cdn.env:CDN_BIND_ADDRESS" \
+  "$canary_dir/cdc.env:CDC_BIND_ADDRESS" \
+  "$canary_dir/health.env:HEALTH_BIND_ADDRESS"; do
+  file=${file_and_key%%:*}
+  key=${file_and_key##*:}
+  [[ $(value_of "$file" "$key") == 127.0.0.1 ]] || fail "$key must be 127.0.0.1 in canary"
+done
+
+for directory in cache thumbnails logs cdn-temp backups mapping-hashes; do
+  [[ -d /srv/tuf-canary/data/$directory ]] || fail "missing /srv/tuf-canary/data/$directory"
+done
+[[ -f $canary_dir/certs/elasticsearch.crt ]] || fail "missing canary Elasticsearch CA certificate"
+
+if (( errors > 0 )); then
+  echo "$errors canary configuration error(s) found" >&2
+  exit 78
+fi
+
+echo "TUF canary configuration is isolated from production"
+

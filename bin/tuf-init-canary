@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ $EUID -ne 0 ]]; then
+  echo "run this command as root" >&2
+  exit 77
+fi
+
+readonly repo_dir=$(/usr/bin/readlink -f "$(/usr/bin/dirname "$0")/..")
+readonly source_dir=$repo_dir/config/canary
+readonly production_dir=/srv/tuf/config
+readonly target_dir=/srv/tuf/config/canary
+readonly names=(common redis storage api cdn cdc health)
+
+[[ -f $source_dir/stack.env ]] || {
+  echo "copy config/canary/stack.env.example to config/canary/stack.env and fill it first" >&2
+  exit 66
+}
+
+for name in "${names[@]}"; do
+  [[ -f $production_dir/$name.env ]] || {
+    echo "missing production config: $production_dir/$name.env" >&2
+    exit 66
+  }
+  [[ -f $source_dir/$name.env ]] || {
+    echo "copy config/canary/$name.env.example to config/canary/$name.env and fill it first" >&2
+    exit 66
+  }
+done
+
+runtime_uid=$(/usr/bin/awk -F= '$1 == "TUF_RUNTIME_UID" { print $2; exit }' "$source_dir/stack.env")
+runtime_gid=$(/usr/bin/awk -F= '$1 == "TUF_RUNTIME_GID" { print $2; exit }' "$source_dir/stack.env")
+[[ $runtime_uid =~ ^[0-9]+$ && $runtime_gid =~ ^[0-9]+$ ]] || {
+  echo "TUF_RUNTIME_UID and TUF_RUNTIME_GID must be numeric" >&2
+  exit 65
+}
+
+merge_env() {
+  local base=$1 override=$2 destination=$3
+  /usr/bin/awk -F= '
+    NR == FNR {
+      if ($0 ~ /^[A-Z][A-Z0-9_]*=/) {
+        key = $1
+        override[key] = $0
+        order[++count] = key
+      }
+      next
+    }
+    $0 ~ /^[A-Z][A-Z0-9_]*=/ && ($1 in override) {
+      print override[$1]
+      used[$1] = 1
+      next
+    }
+    { print }
+    END {
+      for (i = 1; i <= count; i++) if (!(order[i] in used)) print override[order[i]]
+    }
+  ' "$override" "$base" >"$destination"
+}
+
+/usr/bin/install -d -m 0755 -o root -g root "$target_dir" "$target_dir/certs"
+for name in "${names[@]}"; do
+  temporary=$(/usr/bin/mktemp)
+  merge_env "$production_dir/$name.env" "$source_dir/$name.env" "$temporary"
+  /usr/bin/install -m 0600 -o root -g root "$temporary" "$target_dir/$name.env"
+  /usr/bin/rm -f "$temporary"
+done
+/usr/bin/install -m 0600 -o root -g root "$source_dir/stack.env" "$target_dir/stack.env"
+/usr/bin/install -m 0644 -o root -g root "$production_dir/certs/elasticsearch.crt" "$target_dir/certs/elasticsearch.crt"
+
+/usr/bin/install -d -m 0750 -o "$runtime_uid" -g "$runtime_gid" \
+  /srv/tuf-canary/data/cache \
+  /srv/tuf-canary/data/thumbnails \
+  /srv/tuf-canary/data/logs \
+  /srv/tuf-canary/data/cdn-temp \
+  /srv/tuf-canary/data/backups \
+  /srv/tuf-canary/data/mapping-hashes
+
+/usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-canary-config-check" /usr/local/sbin/tuf-canary-config-check
+/usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-deploy-canary" /usr/local/sbin/tuf-deploy-canary
+/usr/bin/install -m 0644 -o root -g root "$repo_dir/systemd/tuf-canary.service" /etc/systemd/system/tuf-canary.service
+/usr/sbin/visudo -cf "$repo_dir/sudoers/tuf-deploy"
+/usr/bin/install -m 0440 -o root -g root "$repo_dir/sudoers/tuf-deploy" /etc/sudoers.d/tuf-deploy
+/usr/bin/systemctl daemon-reload
+/usr/local/sbin/tuf-canary-config-check
+
+echo "canary initialized; start it with: systemctl start tuf-canary.service"

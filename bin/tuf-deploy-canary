@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly infra_dir=/srv/tuf/infra
+readonly stack_env=/srv/tuf/config/canary/stack.env
+readonly lock_file=/run/lock/tuf-deploy.lock
+readonly compose=(/usr/bin/docker compose --env-file "$stack_env" -f "$infra_dir/compose.yml" -f "$infra_dir/compose.canary.yml")
+
+if [[ $# -ne 2 || ! $1 =~ ^(backend|frontend)$ || ! $2 =~ ^[A-Za-z0-9][A-Za-z0-9._-]{6,127}$ ]]; then
+  echo "usage: tuf-deploy-canary <backend|frontend> <immutable-image-tag>" >&2
+  exit 64
+fi
+
+readonly component=$1 requested_tag=$2
+if [[ $component == backend ]]; then
+  readonly tag_key=TUF_BACKEND_IMAGE_TAG
+  readonly services=(api cdn health)
+else
+  readonly tag_key=TUF_FRONTEND_IMAGE_TAG
+  readonly services=(frontend)
+fi
+
+exec 9>"$lock_file"
+/usr/bin/flock -n 9 || {
+  echo "another TUF deployment is already running" >&2
+  exit 75
+}
+
+/usr/local/sbin/tuf-canary-config-check
+previous_tag=$(/usr/bin/awk -F= -v key="$tag_key" '$1 == key { print $2; exit }' "$stack_env")
+[[ -n $previous_tag ]] || {
+  echo "$tag_key is missing from $stack_env" >&2
+  exit 78
+}
+
+set_tag() {
+  local tag=$1 temporary
+  temporary=$(/usr/bin/mktemp "${stack_env}.XXXXXX")
+  /usr/bin/awk -F= -v key="$tag_key" -v tag="$tag" '
+    $1 == key { print key "=" tag; changed = 1; next }
+    { print }
+    END { if (!changed) exit 1 }
+  ' "$stack_env" >"$temporary"
+  /usr/bin/chown --reference="$stack_env" "$temporary"
+  /usr/bin/chmod --reference="$stack_env" "$temporary"
+  /usr/bin/mv -f "$temporary" "$stack_env"
+}
+
+rollback() {
+  echo "canary deployment failed; rolling back $component to $previous_tag" >&2
+  set_tag "$previous_tag"
+  "${compose[@]}" pull "${services[@]}" || true
+  "${compose[@]}" up -d --no-deps --wait "${services[@]}" || true
+}
+
+set_tag "$requested_tag"
+if ! "${compose[@]}" pull "${services[@]}"; then
+  rollback
+  exit 1
+fi
+if ! "${compose[@]}" up -d --no-deps --wait "${services[@]}"; then
+  rollback
+  exit 1
+fi
+
+echo "canary $component deployed: $requested_tag"
+

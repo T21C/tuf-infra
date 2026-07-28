@@ -1,0 +1,20 @@
+[Unit]
+Description=The Universal Forums canary stack
+Wants=network-online.target
+After=network-online.target docker.service mysql.service redis-server.service elasticsearch.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/srv/tuf/infra
+EnvironmentFile=/srv/tuf/config/canary/stack.env
+ExecStartPre=/usr/local/sbin/tuf-canary-config-check
+ExecStartPre=/usr/bin/docker compose --env-file /srv/tuf/config/canary/stack.env -f /srv/tuf/infra/compose.yml -f /srv/tuf/infra/compose.canary.yml config --quiet
+ExecStart=/usr/bin/docker compose --env-file /srv/tuf/config/canary/stack.env -f /srv/tuf/infra/compose.yml -f /srv/tuf/infra/compose.canary.yml up -d --wait
+ExecReload=/usr/bin/docker compose --env-file /srv/tuf/config/canary/stack.env -f /srv/tuf/infra/compose.yml -f /srv/tuf/infra/compose.canary.yml pull
+ExecReload=/usr/bin/docker compose --env-file /srv/tuf/config/canary/stack.env -f /srv/tuf/infra/compose.yml -f /srv/tuf/infra/compose.canary.yml up -d --wait
+ExecStop=/usr/bin/docker compose --env-file /srv/tuf/config/canary/stack.env -f /srv/tuf/infra/compose.yml -f /srv/tuf/infra/compose.canary.yml stop
+TimeoutStartSec=10min
+TimeoutStopSec=2min
+
