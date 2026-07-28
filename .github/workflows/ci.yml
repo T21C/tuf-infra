@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Validate deployment scripts
         run: >-
@@ -37,7 +37,7 @@ jobs:
           --env-file config/stack.env.example
           --file compose.yml
           config
-          --no-interpolate
+          --no-env-resolution
           --quiet
 
       - name: Validate canary Compose model
@@ -47,5 +47,5 @@ jobs:
           --file compose.yml
           --file compose.canary.yml
           config
-          --no-interpolate
+          --no-env-resolution
           --quiet
