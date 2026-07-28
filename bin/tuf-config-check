@@ -66,6 +66,7 @@ for required_path in \
 done
 
 [[ -f /srv/tuf/config/certs/elasticsearch.crt ]] || fail "missing Elasticsearch CA certificate"
+[[ -r /srv/tuf/config/secrets/google-application-credentials.json ]] || fail "missing Google application credentials"
 
 if (( errors > 0 )); then
   echo "$errors configuration error(s) found" >&2
@@ -73,4 +74,3 @@ if (( errors > 0 )); then
 fi
 
 echo "TUF configuration is valid"
-

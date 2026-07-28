@@ -60,6 +60,7 @@ merge_env() {
 }
 
 /usr/bin/install -d -m 0755 -o root -g root "$target_dir" "$target_dir/certs"
+/usr/bin/install -d -m 0750 -o root -g "$runtime_gid" "$target_dir/secrets"
 for name in "${names[@]}"; do
   temporary=$(/usr/bin/mktemp)
   merge_env "$production_dir/$name.env" "$source_dir/$name.env" "$temporary"
@@ -68,6 +69,7 @@ for name in "${names[@]}"; do
 done
 /usr/bin/install -m 0600 -o root -g root "$source_dir/stack.env" "$target_dir/stack.env"
 /usr/bin/install -m 0644 -o root -g root "$production_dir/certs/elasticsearch.crt" "$target_dir/certs/elasticsearch.crt"
+/usr/bin/install -m 0440 -o root -g "$runtime_gid" "$production_dir/secrets/google-application-credentials.json" "$target_dir/secrets/google-application-credentials.json"
 
 /usr/bin/install -d -m 0750 -o "$runtime_uid" -g "$runtime_gid" \
   /srv/tuf-canary/data/cache \

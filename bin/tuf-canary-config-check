@@ -69,6 +69,7 @@ for directory in cache thumbnails logs cdn-temp backups mapping-hashes; do
   [[ -d /srv/tuf-canary/data/$directory ]] || fail "missing /srv/tuf-canary/data/$directory"
 done
 [[ -f $canary_dir/certs/elasticsearch.crt ]] || fail "missing canary Elasticsearch CA certificate"
+[[ -r $canary_dir/secrets/google-application-credentials.json ]] || fail "missing canary Google application credentials"
 
 if (( errors > 0 )); then
   echo "$errors canary configuration error(s) found" >&2
@@ -76,4 +77,3 @@ if (( errors > 0 )); then
 fi
 
 echo "TUF canary configuration is isolated from production"
-

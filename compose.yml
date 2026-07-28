@@ -57,6 +57,9 @@ services:
   api:
     <<: *backend-service
     command: ["node", "dist/app.js"]
+    environment:
+      NODE_ENV: production
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-application-credentials.json
     env_file:
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/redis.env
@@ -70,6 +73,7 @@ services:
       - ${TUF_DATA_ROOT:-/srv/tuf/data}/backups:/srv/tuf/data/backups
       - ${TUF_DATA_ROOT:-/srv/tuf/data}/mapping-hashes:/app/mapping-hashes
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/certs/elasticsearch.crt:/run/secrets/elasticsearch-ca.crt:ro
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/secrets/google-application-credentials.json:/run/secrets/google-application-credentials.json:ro
     depends_on:
       frontend:
         condition: service_healthy

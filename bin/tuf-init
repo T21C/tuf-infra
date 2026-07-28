@@ -33,6 +33,7 @@ runtime_uid=$(/usr/bin/awk -F= '$1 == "TUF_RUNTIME_UID" { print $2; exit }' "$so
 runtime_gid=$(/usr/bin/awk -F= '$1 == "TUF_RUNTIME_GID" { print $2; exit }' "$source_config_dir/stack.env")
 deploy_key=$(/usr/bin/awk -F= '$1 == "TUF_DEPLOY_SSH_PUBLIC_KEY" { print substr($0, index($0, "=") + 1); exit }' "$source_config_dir/stack.env")
 elasticsearch_ca_source=$(/usr/bin/awk -F= '$1 == "ELASTICSEARCH_CA_SOURCE_PATH" { print substr($0, index($0, "=") + 1); exit }' "$source_config_dir/stack.env")
+google_credentials_source=$(/usr/bin/awk -F= '$1 == "GOOGLE_APPLICATION_CREDENTIALS_SOURCE_PATH" { print substr($0, index($0, "=") + 1); exit }' "$source_config_dir/stack.env")
 deploy_key=${deploy_key#\"}
 deploy_key=${deploy_key%\"}
 
@@ -48,6 +49,10 @@ deploy_key=${deploy_key%\"}
   echo "Elasticsearch CA certificate not found: $elasticsearch_ca_source" >&2
   exit 66
 }
+[[ -f $google_credentials_source ]] || {
+  echo "Google application credentials not found: $google_credentials_source" >&2
+  exit 66
+}
 
 if ! /usr/bin/getent group "$runtime_gid" >/dev/null; then
   /usr/sbin/groupadd --system --gid "$runtime_gid" tuf-runtime
@@ -61,6 +66,7 @@ fi
 /usr/bin/passwd -l tuf-deploy >/dev/null
 
 /usr/bin/install -d -m 0755 -o root -g root "$target_root" "$target_config_dir" "$target_config_dir/certs"
+/usr/bin/install -d -m 0750 -o root -g "$runtime_gid" "$target_config_dir/secrets"
 /usr/bin/install -d -m 0750 -o "$runtime_uid" -g "$runtime_gid" \
   "$target_root/data/cache" \
   "$target_root/data/thumbnails" \
@@ -73,6 +79,7 @@ for name in "${config_names[@]}"; do
   /usr/bin/install -m 0600 -o root -g root "$source_config_dir/$name.env" "$target_config_dir/$name.env"
 done
 /usr/bin/install -m 0644 -o root -g root "$elasticsearch_ca_source" "$target_config_dir/certs/elasticsearch.crt"
+/usr/bin/install -m 0440 -o root -g "$runtime_gid" "$google_credentials_source" "$target_config_dir/secrets/google-application-credentials.json"
 
 /usr/bin/install -d -m 0700 -o tuf-deploy -g tuf-deploy /home/tuf-deploy/.ssh
 /usr/bin/printf '%s\n' "$deploy_key" >/home/tuf-deploy/.ssh/authorized_keys

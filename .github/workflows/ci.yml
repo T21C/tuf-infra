@@ -23,6 +23,7 @@ jobs:
       - name: Validate deployment scripts
         run: >-
           shellcheck
+          bin/tuf-install-docker
           bin/tuf-config-check
           bin/tuf-canary-config-check
           bin/tuf-deploy-backend
