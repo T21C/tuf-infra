@@ -59,12 +59,15 @@ services:
     command: ["node", "dist/app.js"]
     env_file:
       - /srv/tuf/config/common.env
+      - /srv/tuf/config/redis.env
+      - /srv/tuf/config/storage.env
       - /srv/tuf/config/api.env
     volumes:
       - /srv/tuf/data/cache:/srv/tuf/data/cache
       - /srv/tuf/data/thumbnails:/srv/tuf/data/thumbnails
       - /srv/tuf/data/logs:/srv/tuf/data/logs
       - /srv/tuf/data/cdn-temp:/srv/tuf/data/cdn-temp
+      - /srv/tuf/data/backups:/srv/tuf/data/backups
       - /srv/tuf/data/mapping-hashes:/app/mapping-hashes
       - /srv/tuf/config/certs/elasticsearch.crt:/run/secrets/elasticsearch-ca.crt:ro
     depends_on:
@@ -84,6 +87,7 @@ services:
     command: ["node", "dist/externalServices/cdnService/app.js"]
     env_file:
       - /srv/tuf/config/common.env
+      - /srv/tuf/config/storage.env
       - /srv/tuf/config/cdn.env
     volumes:
       - /srv/tuf/data/cdn-temp:/srv/tuf/data/cdn-temp
@@ -102,6 +106,7 @@ services:
     command: ["node", "dist/externalServices/cdcService/app.js"]
     env_file:
       - /srv/tuf/config/common.env
+      - /srv/tuf/config/redis.env
       - /srv/tuf/config/cdc.env
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3990/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]

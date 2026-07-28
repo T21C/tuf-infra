@@ -21,7 +21,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Validate deployment scripts
-        run: shellcheck bin/tuf-deploy-backend bin/tuf-deploy-frontend
+        run: shellcheck bin/tuf-config-check bin/tuf-deploy-backend bin/tuf-deploy-frontend bin/tuf-init
 
       - name: Validate Compose model
         run: >-

@@ -17,6 +17,8 @@ Frontend and backend images are stored in GHCR. The server pulls and runs these 
 ├── config/
 │   ├── stack.env
 │   ├── common.env
+│   ├── redis.env
+│   ├── storage.env
 │   ├── api.env
 │   ├── cdn.env
 │   ├── cdc.env
@@ -27,6 +29,7 @@ Frontend and backend images are stored in GHCR. The server pulls and runs these 
 │   ├── thumbnails/
 │   ├── logs/
 │   ├── cdn-temp/
+│   ├── backups/
 │   └── mapping-hashes/
 └── infra/                 # checkout of this repository
 ```

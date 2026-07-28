@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ $EUID -ne 0 ]]; then
+  echo "run this command as root" >&2
+  exit 77
+fi
+
+readonly repo_dir=$(/usr/bin/readlink -f "$(/usr/bin/dirname "$0")/..")
+readonly source_config_dir=$repo_dir/config
+readonly target_root=/srv/tuf
+readonly target_config_dir=$target_root/config
+readonly config_names=(stack common redis storage api cdn cdc health)
+
+for required_command in docker flock systemctl; do
+  command -v "$required_command" >/dev/null || {
+    echo "missing required command: $required_command" >&2
+    exit 69
+  }
+done
+/usr/bin/docker compose version >/dev/null
+
+for name in "${config_names[@]}"; do
+  source="$source_config_dir/$name.env"
+  [[ -f $source ]] || {
+    echo "copy config/$name.env.example to config/$name.env and fill its values first" >&2
+    exit 66
+  }
+done
+
+runtime_uid=$(/usr/bin/awk -F= '$1 == "TUF_RUNTIME_UID" { print $2; exit }' "$source_config_dir/stack.env")
+runtime_gid=$(/usr/bin/awk -F= '$1 == "TUF_RUNTIME_GID" { print $2; exit }' "$source_config_dir/stack.env")
+deploy_key=$(/usr/bin/awk -F= '$1 == "TUF_DEPLOY_SSH_PUBLIC_KEY" { print substr($0, index($0, "=") + 1); exit }' "$source_config_dir/stack.env")
+elasticsearch_ca_source=$(/usr/bin/awk -F= '$1 == "ELASTICSEARCH_CA_SOURCE_PATH" { print substr($0, index($0, "=") + 1); exit }' "$source_config_dir/stack.env")
+deploy_key=${deploy_key#\"}
+deploy_key=${deploy_key%\"}
+
+[[ $runtime_uid =~ ^[0-9]+$ && $runtime_gid =~ ^[0-9]+$ ]] || {
+  echo "TUF_RUNTIME_UID and TUF_RUNTIME_GID must be numeric" >&2
+  exit 65
+}
+[[ $deploy_key == ssh-*\ * && $deploy_key != *__REQUIRED__* ]] || {
+  echo "TUF_DEPLOY_SSH_PUBLIC_KEY must contain an SSH public key" >&2
+  exit 65
+}
+[[ -f $elasticsearch_ca_source ]] || {
+  echo "Elasticsearch CA certificate not found: $elasticsearch_ca_source" >&2
+  exit 66
+}
+
+if ! /usr/bin/getent group "$runtime_gid" >/dev/null; then
+  /usr/sbin/groupadd --system --gid "$runtime_gid" tuf-runtime
+fi
+if ! /usr/bin/getent passwd "$runtime_uid" >/dev/null; then
+  /usr/sbin/useradd --system --uid "$runtime_uid" --gid "$runtime_gid" --no-create-home --shell /usr/sbin/nologin tuf-runtime
+fi
+if ! /usr/bin/id tuf-deploy >/dev/null 2>&1; then
+  /usr/sbin/useradd --create-home --shell /bin/bash tuf-deploy
+fi
+/usr/bin/passwd -l tuf-deploy >/dev/null
+
+/usr/bin/install -d -m 0755 -o root -g root "$target_root" "$target_config_dir" "$target_config_dir/certs"
+/usr/bin/install -d -m 0750 -o "$runtime_uid" -g "$runtime_gid" \
+  "$target_root/data/cache" \
+  "$target_root/data/thumbnails" \
+  "$target_root/data/logs" \
+  "$target_root/data/cdn-temp" \
+  "$target_root/data/backups" \
+  "$target_root/data/mapping-hashes"
+
+for name in "${config_names[@]}"; do
+  /usr/bin/install -m 0600 -o root -g root "$source_config_dir/$name.env" "$target_config_dir/$name.env"
+done
+/usr/bin/install -m 0644 -o root -g root "$elasticsearch_ca_source" "$target_config_dir/certs/elasticsearch.crt"
+
+/usr/bin/install -d -m 0700 -o tuf-deploy -g tuf-deploy /home/tuf-deploy/.ssh
+/usr/bin/printf '%s\n' "$deploy_key" >/home/tuf-deploy/.ssh/authorized_keys
+/usr/bin/chown tuf-deploy:tuf-deploy /home/tuf-deploy/.ssh/authorized_keys
+/usr/bin/chmod 0600 /home/tuf-deploy/.ssh/authorized_keys
+
+/usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-config-check" /usr/local/sbin/tuf-config-check
+/usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-deploy-backend" /usr/local/sbin/tuf-deploy-backend
+/usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-deploy-frontend" /usr/local/sbin/tuf-deploy-frontend
+
+/usr/sbin/visudo -cf "$repo_dir/sudoers/tuf-deploy"
+/usr/bin/install -m 0440 -o root -g root "$repo_dir/sudoers/tuf-deploy" /etc/sudoers.d/tuf-deploy
+/usr/bin/install -m 0644 -o root -g root "$repo_dir/systemd/tuf-stack.service" /etc/systemd/system/tuf-stack.service
+/usr/bin/systemctl daemon-reload
+
+/usr/local/sbin/tuf-config-check
+echo "host initialized; enable the stack with: systemctl enable --now tuf-stack.service"

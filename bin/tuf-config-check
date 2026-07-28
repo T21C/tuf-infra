@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly config_dir=${TUF_CONFIG_DIR:-/srv/tuf/config}
+readonly example_dir=${TUF_CONFIG_EXAMPLE_DIR:-/srv/tuf/infra/config}
+readonly config_names=(stack common redis storage api cdn cdc health)
+
+errors=0
+
+fail() {
+  echo "error: $*" >&2
+  errors=$((errors + 1))
+}
+
+for name in "${config_names[@]}"; do
+  example="$example_dir/$name.env.example"
+  actual="$config_dir/$name.env"
+
+  [[ -f $example ]] || {
+    fail "missing example file: $example"
+    continue
+  }
+  [[ -f $actual ]] || {
+    fail "missing config file: $actual"
+    continue
+  }
+
+  duplicate_keys=$(/usr/bin/awk -F= '
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+    /^[A-Z][A-Z0-9_]*=/ { count[$1]++ }
+    END { for (key in count) if (count[key] > 1) print key }
+  ' "$actual")
+  [[ -z $duplicate_keys ]] || fail "$actual has duplicate keys: ${duplicate_keys//$'\n'/, }"
+
+  while IFS='=' read -r key example_value; do
+    [[ $key =~ ^[A-Z][A-Z0-9_]*$ ]] || continue
+    line=$(/usr/bin/grep -m1 -E "^${key}=" "$actual" || true)
+    if [[ -z $line ]]; then
+      fail "$actual is missing $key"
+      continue
+    fi
+
+    value=${line#*=}
+    if [[ $example_value == __REQUIRED__ && ( -z $value || $value == __REQUIRED__ ) ]]; then
+      fail "$actual requires a value for $key"
+    fi
+    if [[ $value == *replace-with-git-sha* ]]; then
+      fail "$actual still has the placeholder for $key"
+    fi
+  done <"$example"
+
+  permissions=$(/usr/bin/stat -c '%a' "$actual")
+  if (( permissions % 10 != 0 )); then
+    fail "$actual must not be world-readable (current mode: $permissions)"
+  fi
+done
+
+for required_path in \
+  /srv/tuf/data/cache \
+  /srv/tuf/data/thumbnails \
+  /srv/tuf/data/logs \
+  /srv/tuf/data/cdn-temp \
+  /srv/tuf/data/backups \
+  /srv/tuf/data/mapping-hashes; do
+  [[ -d $required_path ]] || fail "missing data directory: $required_path"
+done
+
+[[ -f /srv/tuf/config/certs/elasticsearch.crt ]] || fail "missing Elasticsearch CA certificate"
+
+if (( errors > 0 )); then
+  echo "$errors configuration error(s) found" >&2
+  exit 78
+fi
+
+echo "TUF configuration is valid"
+

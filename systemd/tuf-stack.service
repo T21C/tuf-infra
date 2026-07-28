@@ -9,6 +9,7 @@ Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/srv/tuf/infra
 EnvironmentFile=/srv/tuf/config/stack.env
+ExecStartPre=/usr/local/sbin/tuf-config-check
 ExecStartPre=/usr/bin/docker compose --env-file /srv/tuf/config/stack.env -f /srv/tuf/infra/compose.yml config --quiet
 ExecStart=/usr/bin/docker compose --env-file /srv/tuf/config/stack.env -f /srv/tuf/infra/compose.yml up -d --remove-orphans --wait
 ExecReload=/usr/bin/docker compose --env-file /srv/tuf/config/stack.env -f /srv/tuf/infra/compose.yml pull
@@ -19,4 +20,3 @@ TimeoutStopSec=2min
 
 [Install]
 WantedBy=multi-user.target
-
