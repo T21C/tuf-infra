@@ -31,7 +31,29 @@ jobs:
           bin/tuf-init
           bin/tuf-init-canary
 
+      - name: Prepare Compose validation config
+        run: |
+          set -euo pipefail
+
+          production_dir="${RUNNER_TEMP}/tuf-config"
+          canary_dir="${RUNNER_TEMP}/tuf-canary-config"
+          mkdir -p "${production_dir}/certs" "${canary_dir}/certs"
+
+          for source in config/*.env.example; do
+            target="${production_dir}/$(basename "${source%.example}")"
+            cp "${source}" "${target}"
+          done
+          for source in config/canary/*.env.example; do
+            target="${canary_dir}/$(basename "${source%.example}")"
+            cp "${source}" "${target}"
+          done
+
+          touch "${production_dir}/certs/elasticsearch.crt"
+          touch "${canary_dir}/certs/elasticsearch.crt"
+
       - name: Validate Compose model
+        env:
+          TUF_CONFIG_ROOT: ${{ runner.temp }}/tuf-config
         run: >-
           docker compose
           --env-file config/stack.env.example
@@ -41,6 +63,8 @@ jobs:
           --quiet
 
       - name: Validate canary Compose model
+        env:
+          TUF_CONFIG_ROOT: ${{ runner.temp }}/tuf-canary-config
         run: >-
           docker compose
           --env-file config/canary/stack.env.example
