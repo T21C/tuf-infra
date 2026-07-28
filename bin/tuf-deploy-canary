@@ -21,8 +21,8 @@ else
 fi
 
 exec 9>"$lock_file"
-/usr/bin/flock -n 9 || {
-  echo "another TUF deployment is already running" >&2
+/usr/bin/flock -w 900 9 || {
+  echo "timed out waiting for another TUF deployment to finish" >&2
   exit 75
 }
 
@@ -48,9 +48,13 @@ set_tag() {
 
 rollback() {
   echo "canary deployment failed; rolling back $component to $previous_tag" >&2
+  "${compose[@]}" logs --no-color --tail 200 "${services[@]}" >&2 || true
   set_tag "$previous_tag"
-  "${compose[@]}" pull "${services[@]}" || true
-  "${compose[@]}" up -d --no-deps --wait "${services[@]}" || true
+  if "${compose[@]}" pull "${services[@]}"; then
+    "${compose[@]}" up -d --no-deps --wait "${services[@]}" || true
+  else
+    echo "previous $component image is unavailable; rollback could not be started" >&2
+  fi
 }
 
 set_tag "$requested_tag"
@@ -64,4 +68,3 @@ if ! "${compose[@]}" up -d --no-deps --wait "${services[@]}"; then
 fi
 
 echo "canary $component deployed: $requested_tag"
-
