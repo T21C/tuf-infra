@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ $EUID -ne 0 ]]; then
+  echo "run this command as root" >&2
+  exit 77
+fi
+
+upsert() {
+  local file=$1 key=$2 value=$3 temporary
+  [[ -f $file ]] || {
+    echo "missing config: $file" >&2
+    exit 66
+  }
+  temporary=$(/usr/bin/mktemp "${file}.XXXXXX")
+  /usr/bin/awk -F= -v key="$key" -v value="$value" '
+    $1 == key { print key "=" value; changed = 1; next }
+    { print }
+    END { if (!changed) print key "=" value }
+  ' "$file" >"$temporary"
+  /usr/bin/chown --reference="$file" "$temporary"
+  /usr/bin/chmod --reference="$file" "$temporary"
+  /usr/bin/mv -f "$temporary" "$file"
+}
+
+normalize_stack() {
+  local config_dir=$1 data_root=$2
+
+  upsert "$config_dir/common.env" LOG_PATH "$data_root/logs"
+  upsert "$config_dir/common.env" CDN_TEMP_ROOT "$data_root/cdn-temp"
+  upsert "$config_dir/common.env" WORKSPACE_ROOT "$data_root/cdn-temp/tuf-workspaces"
+
+  upsert "$config_dir/api.env" CACHE_PATH "$data_root/cache"
+  upsert "$config_dir/api.env" THUMBNAILS_CACHE_PATH "$data_root/thumbnails"
+  upsert "$config_dir/api.env" MYSQL_BACKUP_PATH "$data_root/backups/mysql"
+  upsert "$config_dir/api.env" FILES_BACKUP_PATH "$data_root/backups/files"
+  upsert "$config_dir/api.env" ROOT_PATH /app
+  upsert "$config_dir/api.env" ELASTICSEARCH_CA_PATH /run/secrets/elasticsearch-ca.crt
+  upsert "$config_dir/api.env" TRANSLATIONS_PATH ""
+}
+
+normalize_stack /srv/tuf/config /srv/tuf/data
+normalize_stack /srv/tuf/config/canary /srv/tuf-canary/data
+
+/usr/local/sbin/tuf-config-check
+/usr/local/sbin/tuf-canary-config-check
+echo "container runtime paths normalized"

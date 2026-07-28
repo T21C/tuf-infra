@@ -55,6 +55,22 @@ compare_different "$production_dir/stack.env" "$canary_dir/stack.env" TUF_COMPOS
 compare_different "$production_dir/stack.env" "$canary_dir/stack.env" TUF_DATA_ROOT
 compare_different "$production_dir/stack.env" "$canary_dir/stack.env" TUF_FRONTEND_HOST_PORT
 
+require_value() {
+  local file=$1 key=$2 expected=$3 actual
+  actual=$(value_of "$file" "$key")
+  [[ $actual == "$expected" ]] || fail "$key in $file must be $expected"
+}
+
+require_value "$canary_dir/common.env" LOG_PATH /srv/tuf-canary/data/logs
+require_value "$canary_dir/common.env" CDN_TEMP_ROOT /srv/tuf-canary/data/cdn-temp
+require_value "$canary_dir/common.env" WORKSPACE_ROOT /srv/tuf-canary/data/cdn-temp/tuf-workspaces
+require_value "$canary_dir/api.env" CACHE_PATH /srv/tuf-canary/data/cache
+require_value "$canary_dir/api.env" THUMBNAILS_CACHE_PATH /srv/tuf-canary/data/thumbnails
+require_value "$canary_dir/api.env" MYSQL_BACKUP_PATH /srv/tuf-canary/data/backups/mysql
+require_value "$canary_dir/api.env" FILES_BACKUP_PATH /srv/tuf-canary/data/backups/files
+require_value "$canary_dir/api.env" ROOT_PATH /app
+require_value "$canary_dir/api.env" ELASTICSEARCH_CA_PATH /run/secrets/elasticsearch-ca.crt
+
 for file_and_key in \
   "$canary_dir/api.env:BIND_ADDRESS" \
   "$canary_dir/cdn.env:CDN_BIND_ADDRESS" \
