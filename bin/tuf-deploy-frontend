@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly INFRA_DIR=/srv/tuf/infra
+readonly STACK_ENV=/srv/tuf/config/stack.env
+readonly LOCK_FILE=/run/lock/tuf-deploy.lock
+readonly COMPOSE=(/usr/bin/docker compose --env-file "$STACK_ENV" -f "$INFRA_DIR/compose.yml")
+
+if [[ $# -ne 1 || ! $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]{6,127}$ ]]; then
+  echo "usage: tuf-deploy-frontend <immutable-image-tag>" >&2
+  exit 64
+fi
+
+readonly requested_tag=$1
+exec 9>"$LOCK_FILE"
+/usr/bin/flock -n 9 || {
+  echo "another TUF deployment is already running" >&2
+  exit 75
+}
+
+previous_tag=$(/usr/bin/awk -F= '$1 == "TUF_FRONTEND_IMAGE_TAG" { print $2; exit }' "$STACK_ENV")
+if [[ -z $previous_tag ]]; then
+  echo "TUF_FRONTEND_IMAGE_TAG is missing from $STACK_ENV" >&2
+  exit 78
+fi
+
+set_tag() {
+  local tag=$1
+  local temporary
+  temporary=$(/usr/bin/mktemp "${STACK_ENV}.XXXXXX")
+  /usr/bin/awk -F= -v tag="$tag" '
+    BEGIN { changed = 0 }
+    $1 == "TUF_FRONTEND_IMAGE_TAG" { print "TUF_FRONTEND_IMAGE_TAG=" tag; changed = 1; next }
+    { print }
+    END { if (!changed) exit 1 }
+  ' "$STACK_ENV" >"$temporary"
+  /usr/bin/chown --reference="$STACK_ENV" "$temporary"
+  /usr/bin/chmod --reference="$STACK_ENV" "$temporary"
+  /usr/bin/mv -f "$temporary" "$STACK_ENV"
+}
+
+rollback() {
+  echo "frontend deployment failed; rolling back to $previous_tag" >&2
+  set_tag "$previous_tag"
+  "${COMPOSE[@]}" pull frontend || true
+  "${COMPOSE[@]}" up -d --no-deps --wait frontend || true
+}
+
+set_tag "$requested_tag"
+if ! "${COMPOSE[@]}" pull frontend; then
+  rollback
+  exit 1
+fi
+
+if ! "${COMPOSE[@]}" up -d --no-deps --wait frontend; then
+  rollback
+  exit 1
+fi
+
+echo "frontend deployed: $requested_tag"
+

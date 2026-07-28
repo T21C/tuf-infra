@@ -1,0 +1,22 @@
+[Unit]
+Description=The Universal Forums application stack
+Wants=network-online.target
+After=network-online.target docker.service mysql.service redis-server.service elasticsearch.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/srv/tuf/infra
+EnvironmentFile=/srv/tuf/config/stack.env
+ExecStartPre=/usr/bin/docker compose --env-file /srv/tuf/config/stack.env -f /srv/tuf/infra/compose.yml config --quiet
+ExecStart=/usr/bin/docker compose --env-file /srv/tuf/config/stack.env -f /srv/tuf/infra/compose.yml up -d --remove-orphans --wait
+ExecReload=/usr/bin/docker compose --env-file /srv/tuf/config/stack.env -f /srv/tuf/infra/compose.yml pull
+ExecReload=/usr/bin/docker compose --env-file /srv/tuf/config/stack.env -f /srv/tuf/infra/compose.yml up -d --remove-orphans --wait
+ExecStop=/usr/bin/docker compose --env-file /srv/tuf/config/stack.env -f /srv/tuf/infra/compose.yml stop
+TimeoutStartSec=10min
+TimeoutStopSec=2min
+
+[Install]
+WantedBy=multi-user.target
+

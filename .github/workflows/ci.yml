@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infra-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate deployment scripts
+        run: shellcheck bin/tuf-deploy-backend bin/tuf-deploy-frontend
+
+      - name: Validate Compose model
+        run: >-
+          docker compose
+          --env-file config/stack.env.example
+          --file compose.yml
+          config
+          --no-interpolate
+          --quiet
