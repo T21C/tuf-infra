@@ -6,7 +6,8 @@ readonly frontend_tag=${2:-}
 readonly infra_dir=/srv/tuf/infra
 readonly stack_env=/srv/tuf/config/stack.env
 readonly nginx_site=/etc/nginx/sites-enabled/tuforums.com
-readonly backup_dir=/var/backups/tuf/cutover-$(date -u +%Y%m%dT%H%M%SZ)
+backup_dir=/var/backups/tuf/cutover-$(date -u +%Y%m%dT%H%M%SZ)
+readonly backup_dir
 readonly compose=(/usr/bin/docker compose --env-file "$stack_env" -f "$infra_dir/compose.yml")
 readonly service_ports=(3000 3001 3883 3990)
 
@@ -115,7 +116,9 @@ rollback() {
 
   if (( nginx_changed == 1 )) && [[ -f $backup_dir/tuforums.com ]]; then
     /usr/bin/install -m 0644 -o root -g root "$backup_dir/tuforums.com" "$nginx_site"
-    /usr/sbin/nginx -t && /usr/bin/systemctl reload nginx || true
+    if /usr/sbin/nginx -t; then
+      /usr/bin/systemctl reload nginx || true
+    fi
   fi
 
   if (( legacy_stopped == 1 )); then
