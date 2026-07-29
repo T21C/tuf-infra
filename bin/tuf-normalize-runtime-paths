@@ -37,6 +37,7 @@ normalize_stack() {
   upsert "$config_dir/api.env" ROOT_PATH /app
   upsert "$config_dir/api.env" ELASTICSEARCH_CA_PATH /run/secrets/elasticsearch-ca.crt
   upsert "$config_dir/api.env" TRANSLATIONS_PATH ""
+  upsert "$config_dir/storage.env" PACK_CDN_ROOT "$data_root/cdn-temp/packs"
 }
 
 # Both stacks use the same paths inside their containers. Compose isolates the
