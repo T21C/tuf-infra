@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly INFRA_DIR=/srv/tuf/infra
+readonly LOCK_FILE=/run/lock/tuf-deploy.lock
+readonly ALLOWED_SERVICES=(frontend api cdn cdc health)
+
+usage() {
+  echo "usage: tuf-recreate [--canary] <service> [service...]" >&2
+  echo "  services: ${ALLOWED_SERVICES[*]}" >&2
+  echo "  force-recreates containers so updated env_file values are applied" >&2
+  exit 64
+}
+
+stack=production
+services=()
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --canary)
+      stack=canary
+      shift
+      ;;
+    -h | --help)
+      usage
+      ;;
+    -*)
+      echo "unknown option: $1" >&2
+      usage
+      ;;
+    *)
+      services+=("$1")
+      shift
+      ;;
+  esac
+done
+
+(( ${#services[@]} > 0 )) || usage
+
+is_allowed() {
+  local candidate=$1 name
+  for name in "${ALLOWED_SERVICES[@]}"; do
+    [[ $candidate == "$name" ]] && return 0
+  done
+  return 1
+}
+
+for service in "${services[@]}"; do
+  if ! is_allowed "$service"; then
+    echo "unknown service: $service (allowed: ${ALLOWED_SERVICES[*]})" >&2
+    exit 64
+  fi
+done
+
+if [[ $stack == canary ]]; then
+  readonly STACK_ENV=/srv/tuf/config/canary/stack.env
+  readonly COMPOSE=(
+    /usr/bin/docker compose
+    --env-file "$STACK_ENV"
+    -f "$INFRA_DIR/compose.yml"
+    -f "$INFRA_DIR/compose.canary.yml"
+  )
+else
+  readonly STACK_ENV=/srv/tuf/config/stack.env
+  readonly COMPOSE=(
+    /usr/bin/docker compose
+    --env-file "$STACK_ENV"
+    -f "$INFRA_DIR/compose.yml"
+  )
+fi
+
+[[ -f $STACK_ENV ]] || {
+  echo "missing stack env: $STACK_ENV" >&2
+  exit 66
+}
+
+exec 9>"$LOCK_FILE"
+/usr/bin/flock -n 9 || {
+  echo "another TUF deployment is already running" >&2
+  exit 75
+}
+
+"${COMPOSE[@]}" up -d --force-recreate --no-deps --wait "${services[@]}"
+echo "recreated ($stack): ${services[*]}"

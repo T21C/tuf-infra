@@ -81,6 +81,7 @@ done
 
 /usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-canary-config-check" /usr/local/sbin/tuf-canary-config-check
 /usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-deploy-canary" /usr/local/sbin/tuf-deploy-canary
+/usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-recreate" /usr/local/sbin/tuf-recreate
 /usr/bin/install -m 0644 -o root -g root "$repo_dir/systemd/tuf-canary.service" /etc/systemd/system/tuf-canary.service
 /usr/sbin/visudo -cf "$repo_dir/sudoers/tuf-deploy"
 /usr/bin/install -m 0440 -o root -g root "$repo_dir/sudoers/tuf-deploy" /etc/sudoers.d/tuf-deploy

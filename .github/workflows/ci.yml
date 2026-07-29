@@ -30,6 +30,7 @@ jobs:
           bin/tuf-deploy-backend
           bin/tuf-deploy-frontend
           bin/tuf-deploy-canary
+          bin/tuf-recreate
           bin/tuf-init
           bin/tuf-init-canary
           bin/tuf-seed-production-mapping-hashes
