@@ -1,0 +1,243 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly backend_tag=${1:-}
+readonly frontend_tag=${2:-}
+readonly infra_dir=/srv/tuf/infra
+readonly stack_env=/srv/tuf/config/stack.env
+readonly nginx_site=/etc/nginx/sites-enabled/tuforums.com
+readonly backup_dir=/var/backups/tuf/cutover-$(date -u +%Y%m%dT%H%M%SZ)
+readonly compose=(/usr/bin/docker compose --env-file "$stack_env" -f "$infra_dir/compose.yml")
+readonly service_ports=(3000 3001 3883 3990)
+
+if [[ $EUID -ne 0 ]]; then
+  echo "run this command as root" >&2
+  exit 77
+fi
+if [[ ! $backend_tag =~ ^[0-9a-f]{40}$ || ! $frontend_tag =~ ^[0-9a-f]{40}$ ]]; then
+  echo "usage: $0 <backend-git-sha> <frontend-git-sha>" >&2
+  exit 64
+fi
+
+legacy_stopped=0
+nginx_changed=0
+cutover_complete=0
+
+listener_pids() {
+  local port=$1
+  /usr/bin/ss -H -ltnp "sport = :$port" \
+    | /usr/bin/grep -oE 'pid=[0-9]+' \
+    | /usr/bin/cut -d= -f2 \
+    | /usr/bin/sort -u || true
+}
+
+stop_service_listeners() {
+  local port occupied
+  local -a pids=()
+
+  for port in "${service_ports[@]}"; do
+    mapfile -t pids < <(listener_pids "$port")
+    if (( ${#pids[@]} > 0 )); then
+      echo "stopping leftover listener(s) on $port: ${pids[*]}"
+      /usr/bin/kill -TERM "${pids[@]}" 2>/dev/null || true
+    fi
+  done
+
+  for _ in {1..20}; do
+    occupied=0
+    for port in "${service_ports[@]}"; do
+      mapfile -t pids < <(listener_pids "$port")
+      if (( ${#pids[@]} > 0 )); then
+        occupied=1
+      fi
+    done
+    (( occupied == 0 )) && break
+    /usr/bin/sleep 1
+  done
+
+  for port in "${service_ports[@]}"; do
+    mapfile -t pids < <(listener_pids "$port")
+    if (( ${#pids[@]} > 0 )); then
+      echo "force-stopping listener(s) on $port: ${pids[*]}"
+      /usr/bin/kill -KILL "${pids[@]}" 2>/dev/null || true
+    fi
+  done
+
+  /usr/bin/sleep 2
+  for port in "${service_ports[@]}"; do
+    if [[ -n $(listener_pids "$port") ]]; then
+      echo "port $port is still occupied" >&2
+      return 1
+    fi
+  done
+}
+
+start_legacy() {
+  local name
+  local start='source /root/.nvm/nvm.sh && nvm use default --silent && exec npm run'
+
+  for name in tuf-legacy-api tuf-legacy-cdn tuf-legacy-cdc tuf-legacy-health; do
+    /usr/bin/tmux kill-session -t "$name" 2>/dev/null || true
+  done
+  /usr/bin/tmux new-session -d -s tuf-legacy-api -c /root/server "/bin/bash -lc '$start production'"
+  /usr/bin/tmux new-session -d -s tuf-legacy-cdn -c /root/server "/bin/bash -lc '$start cdn'"
+  /usr/bin/tmux new-session -d -s tuf-legacy-cdc -c /root/server "/bin/bash -lc '$start cdc'"
+  /usr/bin/tmux new-session -d -s tuf-legacy-health -c /root/server "/bin/bash -lc '$start health'"
+}
+
+wait_for_url() {
+  local label=$1 url=$2 attempts=${3:-120}
+  local attempt
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if /usr/bin/curl --max-time 5 -fsS "$url" >/dev/null; then
+      echo "$label is healthy"
+      return 0
+    fi
+    if (( attempt % 10 == 0 )); then
+      echo "waiting for $label ($attempt/$attempts)"
+    fi
+    /usr/bin/sleep 2
+  done
+  echo "$label failed to become healthy: $url" >&2
+  return 1
+}
+
+rollback() {
+  local original_status=$1
+  trap - EXIT INT TERM
+  set +e
+  echo "cutover failed (status $original_status); restoring legacy production" >&2
+
+  /usr/bin/systemctl disable tuf-stack.service >/dev/null 2>&1 || true
+  "${compose[@]}" stop -t 20 api cdn cdc health >/dev/null 2>&1 || true
+  /usr/bin/systemctl stop tuf-stack.service >/dev/null 2>&1 || true
+  stop_service_listeners || true
+
+  if (( nginx_changed == 1 )) && [[ -f $backup_dir/tuforums.com ]]; then
+    /usr/bin/install -m 0644 -o root -g root "$backup_dir/tuforums.com" "$nginx_site"
+    /usr/sbin/nginx -t && /usr/bin/systemctl reload nginx || true
+  fi
+
+  if (( legacy_stopped == 1 )); then
+    start_legacy || true
+    wait_for_url legacy-api http://127.0.0.1:3000/v2/health 120 || true
+    wait_for_url legacy-cdn http://127.0.0.1:3001/health 30 || true
+    wait_for_url legacy-health http://127.0.0.1:3883/health/api 30 || true
+    wait_for_url legacy-cdc http://127.0.0.1:3990/health 30 || true
+  fi
+
+  echo "rollback finished; backup: $backup_dir" >&2
+  exit "$original_status"
+}
+
+on_exit() {
+  local status=$?
+  if (( status != 0 && cutover_complete == 0 )); then
+    rollback "$status"
+  fi
+}
+trap on_exit EXIT
+trap 'exit 130' INT TERM
+
+echo "[1/9] validating configuration"
+/usr/local/sbin/tuf-config-check
+"${compose[@]}" config --quiet
+/usr/sbin/nginx -t
+
+echo "[2/9] deploying the production frontend off-traffic"
+/usr/local/sbin/tuf-deploy-frontend "$frontend_tag"
+wait_for_url frontend http://127.0.0.1:8080/healthz 30
+
+echo "[3/9] pulling backend and refreshing mapping hashes"
+/usr/bin/docker pull "ghcr.io/t21c/tuf-backend:$backend_tag"
+/usr/local/sbin/tuf-seed-production-mapping-hashes
+/usr/bin/docker run --rm \
+  --network host \
+  --user 10001:10001 \
+  --read-only \
+  --tmpfs /tmp:rw,nosuid,nodev,size=64m,uid=10001,gid=10001,mode=1770 \
+  --env-file /srv/tuf/config/common.env \
+  --env-file /srv/tuf/config/redis.env \
+  --env-file /srv/tuf/config/storage.env \
+  --env-file /srv/tuf/config/api.env \
+  --env NODE_ENV=production \
+  --volume /srv/tuf/data/mapping-hashes:/app/mapping-hashes:ro \
+  --volume /srv/tuf/config/certs/elasticsearch.crt:/run/secrets/elasticsearch-ca.crt:ro \
+  "ghcr.io/t21c/tuf-backend:$backend_tag" \
+  node --input-type=module -e \
+  'const m=await import("./dist/config/elasticsearch.js"); const flags=await m.checkIfReindexingNeeded(); console.log("reindex preflight", flags); process.exit(Object.values(flags).some(Boolean) ? 42 : 0)'
+
+echo "[4/9] backing up Nginx"
+/usr/bin/install -d -m 0700 "$backup_dir"
+/usr/bin/cp -a "$nginx_site" "$backup_dir/tuforums.com"
+
+echo "[5/9] stopping legacy tmux services"
+mapfile -t legacy_sessions < <(
+  /usr/bin/tmux list-panes -a -F '#{session_name}|#{pane_current_path}' 2>/dev/null \
+    | /usr/bin/awk -F'|' '$2 == "/root/server" { print $1 }' \
+    | /usr/bin/sort -u
+)
+if (( ${#legacy_sessions[@]} == 0 )); then
+  echo "no /root/server tmux sessions found" >&2
+  exit 1
+fi
+for session in "${legacy_sessions[@]}"; do
+  /usr/bin/tmux kill-session -t "$session"
+done
+legacy_stopped=1
+stop_service_listeners
+
+echo "[6/9] deploying production backend containers"
+/usr/local/sbin/tuf-deploy-backend "$backend_tag"
+wait_for_url api http://127.0.0.1:3000/v2/health 30
+wait_for_url cdn http://127.0.0.1:3001/health 30
+wait_for_url health http://127.0.0.1:3883/health/api 30
+wait_for_url cdc http://127.0.0.1:3990/health 30
+
+echo "[7/9] enabling systemd ownership"
+/usr/bin/systemctl enable tuf-stack.service >/dev/null
+/usr/bin/systemctl start tuf-stack.service
+
+echo "[8/9] switching Nginx frontend traffic"
+readonly generated_site="$backup_dir/tuforums.com.docker"
+/usr/bin/awk '
+  /    error_page 404 \/404.html;/ {
+    print "    # Frontend is served by the non-root production container."
+    print "    location ~ ^/(passes|levels|profile)/[0-9]+$|^/packs/[0-9a-zA-Z]+$ {"
+    print "        proxy_pass http://127.0.0.1:3000;"
+    print "        proxy_http_version 1.1;"
+    print "        proxy_set_header Host $host;"
+    print "        proxy_set_header X-Real-IP $remote_addr;"
+    print "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;"
+    print "        proxy_set_header X-Forwarded-Proto $scheme;"
+    print "        add_header Cache-Control \"no-store, must-revalidate\" always;"
+    print "    }"
+    print "    location / {"
+    print "        proxy_pass http://127.0.0.1:8080;"
+    print "        proxy_http_version 1.1;"
+    print "        proxy_set_header Host $host;"
+    print "        proxy_set_header X-Real-IP $remote_addr;"
+    print "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;"
+    print "        proxy_set_header X-Forwarded-Proto $scheme;"
+    print "    }"
+    skipping=1
+    next
+  }
+  skipping && /    # Enable gzip compression/ { skipping=0 }
+  !skipping { print }
+' "$backup_dir/tuforums.com" >"$generated_site"
+/usr/bin/install -m 0644 -o root -g root "$generated_site" "$nginx_site"
+nginx_changed=1
+/usr/sbin/nginx -t
+/usr/bin/systemctl reload nginx
+
+echo "[9/9] verifying public production"
+wait_for_url public-site https://tuforums.com/ 30
+wait_for_url public-api https://api.tuforums.com/v2/health 30
+
+cutover_complete=1
+trap - EXIT INT TERM
+echo "production cutover complete"
+echo "backend: $backend_tag"
+echo "frontend: $frontend_tag"
+echo "backup: $backup_dir"

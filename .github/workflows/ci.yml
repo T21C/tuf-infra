@@ -25,6 +25,7 @@ jobs:
           shellcheck
           bin/tuf-install-docker
           bin/tuf-config-check
+          bin/tuf-cutover-production
           bin/tuf-canary-config-check
           bin/tuf-deploy-backend
           bin/tuf-deploy-frontend
