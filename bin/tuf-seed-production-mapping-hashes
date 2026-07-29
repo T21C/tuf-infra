@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly source_dir=${1:-/root/server/mapping-hashes}
+readonly target_dir=/srv/tuf/data/mapping-hashes
+readonly runtime_uid=10001
+readonly runtime_gid=10001
+readonly names=(
+  mapping-hash-levels.json
+  mapping-hash-passes.json
+  mapping-hash-players.json
+  mapping-hash-creators.json
+)
+
+if [[ $EUID -ne 0 ]]; then
+  echo "run this command as root" >&2
+  exit 77
+fi
+
+for name in "${names[@]}"; do
+  source_file="$source_dir/$name"
+  [[ -f $source_file ]] || {
+    echo "missing legacy mapping hash: $source_file" >&2
+    exit 66
+  }
+  /usr/bin/python3 - "$source_file" <<'PY'
+import json
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    payload = json.load(handle)
+value = payload.get("hash")
+if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{40}", value) is None:
+    raise SystemExit(f"invalid mapping hash: {sys.argv[1]}")
+PY
+done
+
+/usr/bin/install -d -m 0750 -o "$runtime_uid" -g "$runtime_gid" "$target_dir"
+for name in "${names[@]}"; do
+  /usr/bin/install -m 0640 -o "$runtime_uid" -g "$runtime_gid" \
+    "$source_dir/$name" "$target_dir/$name"
+done
+
+echo "production mapping hashes seeded from $source_dir"
