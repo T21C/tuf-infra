@@ -39,8 +39,10 @@ normalize_stack() {
   upsert "$config_dir/api.env" TRANSLATIONS_PATH ""
 }
 
+# Both stacks use the same paths inside their containers. Compose isolates the
+# backing host directories through TUF_DATA_ROOT bind-mount sources.
 normalize_stack /srv/tuf/config /srv/tuf/data
-normalize_stack /srv/tuf/config/canary /srv/tuf-canary/data
+normalize_stack /srv/tuf/config/canary /srv/tuf/data
 
 /usr/local/sbin/tuf-config-check
 /usr/local/sbin/tuf-canary-config-check
