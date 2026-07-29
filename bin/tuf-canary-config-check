@@ -74,6 +74,8 @@ require_value "$canary_dir/api.env" ELASTICSEARCH_CA_PATH /run/secrets/elasticse
 require_value "$canary_dir/api.env" ELASTICSEARCH_INDEX_PREFIX tuf_canary_
 require_value "$canary_dir/storage.env" PACK_CDN_ROOT /srv/tuf/data/cdn-temp/packs
 require_value "$canary_dir/health.env" LOG_PATH /tmp/tuf-health-logs
+require_value "$canary_dir/health.env" HEALTH_MAIN_SERVER_URL http://127.0.0.1:13000/v2/health
+require_value "$canary_dir/health.env" HEALTH_CDN_URL http://127.0.0.1:13001/health
 
 for file_and_key in \
   "$canary_dir/api.env:BIND_ADDRESS" \
