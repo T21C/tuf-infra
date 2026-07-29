@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ $EUID -ne 0 ]]; then
+  echo "run this command as root" >&2
+  exit 77
+fi
+
+value_of() {
+  local file=$1 key=$2 line
+  line=$(/usr/bin/grep -m1 -E "^${key}=" "$file" || true)
+  /usr/bin/printf '%s' "${line#*=}"
+}
+
+readonly production_common=/srv/tuf/config/common.env
+readonly canary_common=/srv/tuf/config/canary/common.env
+readonly production_database=$(value_of "$production_common" DB_DATABASE)
+readonly canary_database=$(value_of "$canary_common" DB_DATABASE)
+readonly database_user=$(value_of "$production_common" DB_USER)
+
+for value in "$production_database" "$canary_database" "$database_user"; do
+  [[ $value =~ ^[A-Za-z0-9_]+$ ]] || {
+    echo "database names and user must contain only letters, digits, or underscores" >&2
+    exit 65
+  }
+done
+[[ $production_database != "$canary_database" ]] || {
+  echo "production and canary databases must differ" >&2
+  exit 65
+}
+
+/usr/bin/mysql --batch --skip-column-names -e \
+  "CREATE DATABASE IF NOT EXISTS \`$canary_database\` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
+
+table_count=$(/usr/bin/mysql --batch --skip-column-names -e \
+  "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '$canary_database'")
+if [[ $table_count == 0 ]]; then
+  /usr/bin/mysqldump --no-data --routines --triggers --events \
+    --single-transaction --set-gtid-purged=OFF "$production_database" \
+    | /usr/bin/mysql "$canary_database"
+  echo "cloned production schema into $canary_database"
+else
+  echo "$canary_database already has $table_count table(s); schema clone skipped"
+fi
+
+grant_statements=$(/usr/bin/mysql --batch --skip-column-names -e \
+  "SELECT CONCAT('GRANT ALL PRIVILEGES ON \`$canary_database\`.* TO ', QUOTE(User), '@', QUOTE(Host), ';') FROM mysql.user WHERE User = '$database_user'")
+[[ -n $grant_statements ]] || {
+  echo "MySQL account not found for DB_USER=$database_user" >&2
+  exit 66
+}
+/usr/bin/printf '%s\n' "$grant_statements" | /usr/bin/mysql
+
+echo "canary database initialized: $canary_database"
