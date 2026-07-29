@@ -49,6 +49,7 @@ upsert /srv/tuf/config/canary/api.env CDC_PROJECTORS_DISABLED 1
 upsert /srv/tuf/config/canary/api.env ES_RECONCILE_CRON_DISABLED 1
 upsert /srv/tuf/config/canary/api.env LEADERBOARD_RANK_SNAPSHOT_CRON_DISABLED 1
 upsert /srv/tuf/config/canary/api.env WEEKLY_CURATION_SCHEDULE_CRON_DISABLED 1
+upsert /srv/tuf/config/canary/api.env CORS_EXTRA_ORIGINS http://localhost:18080,http://127.0.0.1:18080
 upsert /srv/tuf/config/health.env HEALTH_MAIN_SERVER_URL http://127.0.0.1:3000/v2/health
 upsert /srv/tuf/config/health.env HEALTH_CDN_URL http://127.0.0.1:3001/health
 upsert /srv/tuf/config/canary/health.env LOG_PATH /tmp/tuf-health-logs

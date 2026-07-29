@@ -72,6 +72,7 @@ require_value "$canary_dir/api.env" FILES_BACKUP_PATH /srv/tuf/data/backups/file
 require_value "$canary_dir/api.env" ROOT_PATH /app
 require_value "$canary_dir/api.env" ELASTICSEARCH_CA_PATH /run/secrets/elasticsearch-ca.crt
 require_value "$canary_dir/api.env" ELASTICSEARCH_INDEX_PREFIX tuf_canary_
+require_value "$canary_dir/api.env" CORS_EXTRA_ORIGINS http://localhost:18080,http://127.0.0.1:18080
 require_value "$canary_dir/storage.env" PACK_CDN_ROOT /srv/tuf/data/cdn-temp/packs
 require_value "$canary_dir/health.env" LOG_PATH /tmp/tuf-health-logs
 require_value "$canary_dir/health.env" HEALTH_MAIN_SERVER_URL http://127.0.0.1:13000/v2/health
