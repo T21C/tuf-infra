@@ -82,7 +82,9 @@ services:
       interval: 15s
       timeout: 5s
       retries: 8
-      start_period: 45s
+      # A mapping/indexer change can require a one-time full production reindex
+      # before the API starts listening. The 2 CPU host needs several minutes.
+      start_period: 10m
     mem_limit: 1536m
     pids_limit: 512
 
@@ -112,6 +114,8 @@ services:
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/redis.env
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/cdc.env
+    volumes:
+      - ${TUF_DATA_ROOT:-/srv/tuf/data}/logs:/srv/tuf/data/logs
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.CDC_HEALTH_PORT||3990)+'/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 15s

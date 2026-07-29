@@ -15,7 +15,7 @@ ExecStart=/usr/bin/docker compose --env-file /srv/tuf/config/stack.env -f /srv/t
 ExecReload=/usr/bin/docker compose --env-file /srv/tuf/config/stack.env -f /srv/tuf/infra/compose.yml pull
 ExecReload=/usr/bin/docker compose --env-file /srv/tuf/config/stack.env -f /srv/tuf/infra/compose.yml up -d --remove-orphans --wait
 ExecStop=/usr/bin/docker compose --env-file /srv/tuf/config/stack.env -f /srv/tuf/infra/compose.yml stop
-TimeoutStartSec=10min
+TimeoutStartSec=20min
 TimeoutStopSec=2min
 
 [Install]
