@@ -54,6 +54,7 @@ compare_different "$production_dir/health.env" "$canary_dir/health.env" HEALTH_P
 compare_different "$production_dir/stack.env" "$canary_dir/stack.env" TUF_COMPOSE_PROJECT_NAME
 compare_different "$production_dir/stack.env" "$canary_dir/stack.env" TUF_DATA_ROOT
 compare_different "$production_dir/stack.env" "$canary_dir/stack.env" TUF_FRONTEND_HOST_PORT
+compare_different "$production_dir/api.env" "$canary_dir/api.env" ELASTICSEARCH_INDEX_PREFIX
 
 require_value() {
   local file=$1 key=$2 expected=$3 actual
@@ -70,7 +71,9 @@ require_value "$canary_dir/api.env" MYSQL_BACKUP_PATH /srv/tuf/data/backups/mysq
 require_value "$canary_dir/api.env" FILES_BACKUP_PATH /srv/tuf/data/backups/files
 require_value "$canary_dir/api.env" ROOT_PATH /app
 require_value "$canary_dir/api.env" ELASTICSEARCH_CA_PATH /run/secrets/elasticsearch-ca.crt
+require_value "$canary_dir/api.env" ELASTICSEARCH_INDEX_PREFIX tuf_canary_
 require_value "$canary_dir/storage.env" PACK_CDN_ROOT /srv/tuf/data/cdn-temp/packs
+require_value "$canary_dir/health.env" LOG_PATH /tmp/tuf-health-logs
 
 for file_and_key in \
   "$canary_dir/api.env:BIND_ADDRESS" \

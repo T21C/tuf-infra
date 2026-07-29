@@ -127,6 +127,8 @@ services:
     env_file:
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/health.env
+    volumes:
+      - ${TUF_DATA_ROOT:-/srv/tuf/data}/logs:/srv/tuf/data/logs
     depends_on:
       api:
         condition: service_healthy

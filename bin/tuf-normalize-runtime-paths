@@ -24,7 +24,7 @@ upsert() {
 }
 
 normalize_stack() {
-  local config_dir=$1 data_root=$2
+  local config_dir=$1 data_root=$2 index_prefix=$3
 
   upsert "$config_dir/common.env" LOG_PATH "$data_root/logs"
   upsert "$config_dir/common.env" CDN_TEMP_ROOT "$data_root/cdn-temp"
@@ -37,13 +37,19 @@ normalize_stack() {
   upsert "$config_dir/api.env" ROOT_PATH /app
   upsert "$config_dir/api.env" ELASTICSEARCH_CA_PATH /run/secrets/elasticsearch-ca.crt
   upsert "$config_dir/api.env" TRANSLATIONS_PATH ""
+  upsert "$config_dir/api.env" ELASTICSEARCH_INDEX_PREFIX "$index_prefix"
   upsert "$config_dir/storage.env" PACK_CDN_ROOT "$data_root/cdn-temp/packs"
 }
 
 # Both stacks use the same paths inside their containers. Compose isolates the
 # backing host directories through TUF_DATA_ROOT bind-mount sources.
-normalize_stack /srv/tuf/config /srv/tuf/data
-normalize_stack /srv/tuf/config/canary /srv/tuf/data
+normalize_stack /srv/tuf/config /srv/tuf/data ""
+normalize_stack /srv/tuf/config/canary /srv/tuf/data tuf_canary_
+upsert /srv/tuf/config/canary/api.env CDC_PROJECTORS_DISABLED 1
+upsert /srv/tuf/config/canary/api.env ES_RECONCILE_CRON_DISABLED 1
+upsert /srv/tuf/config/canary/api.env LEADERBOARD_RANK_SNAPSHOT_CRON_DISABLED 1
+upsert /srv/tuf/config/canary/api.env WEEKLY_CURATION_SCHEDULE_CRON_DISABLED 1
+upsert /srv/tuf/config/canary/health.env LOG_PATH /tmp/tuf-health-logs
 
 /usr/local/sbin/tuf-config-check
 /usr/local/sbin/tuf-canary-config-check

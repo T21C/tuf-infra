@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ $EUID -ne 0 ]]; then
+  echo "run this command as root" >&2
+  exit 77
+fi
+if [[ $# -ne 1 || ! $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]{6,127}$ ]]; then
+  echo "usage: tuf-repair-production-search <immutable-backend-image-tag>" >&2
+  exit 64
+fi
+
+readonly tag=$1
+readonly image="ghcr.io/t21c/tuf-backend:$tag"
+readonly config_dir=/srv/tuf/config
+
+# A failed first deployment has no healthy backend image to roll back to. Stop
+# any surviving canary workers before repairing the shared production index.
+/usr/bin/docker stop tuf-canary-api-1 tuf-canary-cdn-1 tuf-canary-health-1 >/dev/null 2>&1 || true
+/usr/bin/docker pull "$image"
+
+/usr/bin/docker run --rm \
+  --name tuf-production-search-repair \
+  --network host \
+  --user 10001:10001 \
+  --env-file "$config_dir/common.env" \
+  --env-file "$config_dir/redis.env" \
+  --env-file "$config_dir/storage.env" \
+  --env-file "$config_dir/api.env" \
+  --mount "type=bind,src=$config_dir/certs/elasticsearch.crt,dst=/run/secrets/elasticsearch-ca.crt,readonly" \
+  "$image" \
+  node --input-type=module --eval '
+    const [{default: ElasticsearchService}, {default: client}, {default: db}] = await Promise.all([
+      import("./dist/server/services/elasticsearch/ElasticsearchService.js"),
+      import("./dist/config/elasticsearch.js"),
+      import("./dist/models/index.js"),
+    ]);
+    const service = ElasticsearchService.getInstance();
+    await service.reindexLevels();
+    await service.reindexPasses();
+    await service.reindexAllPlayers();
+    await service.reindexAllCreators();
+    await client.indices.refresh({index: "levels_v1,passes_v1,players_v1,creators_v1"});
+    await db.sequelize.close();
+    await client.close();
+    console.log("production Elasticsearch indices repopulated");
+  '
+
+echo "production search repair complete"
