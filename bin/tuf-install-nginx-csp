@@ -6,9 +6,17 @@ if [[ $EUID -ne 0 ]]; then
   exit 77
 fi
 
-repo_dir=$(/usr/bin/readlink -f "$(/usr/bin/dirname "$0")/..")
-readonly repo_dir
-readonly source_snippet=$repo_dir/nginx/tuf-csp.conf
+script_dir=$(/usr/bin/readlink -f "$(/usr/bin/dirname "$0")")
+readonly script_dir
+readonly repo_source_snippet=$script_dir/../nginx/tuf-csp.conf
+readonly installed_source_snippet=/usr/local/share/tuf/tuf-csp.conf
+
+if [[ -f $repo_source_snippet ]]; then
+  source_snippet=$repo_source_snippet
+else
+  source_snippet=$installed_source_snippet
+fi
+readonly source_snippet
 readonly target_snippet=/etc/nginx/snippets/tuf-csp.conf
 backup_timestamp=$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)
 readonly backup_timestamp

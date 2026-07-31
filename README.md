@@ -54,6 +54,8 @@ Canary data is stored separately in `/srv/tuf-canary/data`.
 
 The production CSP is stored in `nginx/tuf-csp.conf`. It permits the frontend to
 connect to TUFHelperLite only on `127.0.0.1` ports `32145` through `32155`.
+`tuf-init` installs that source snippet at `/usr/local/share/tuf/tuf-csp.conf`
+so `/usr/local/sbin/tuf-install-nginx-csp` remains self-contained after installation.
 
 Apply it from a trusted checkout as root:
 
