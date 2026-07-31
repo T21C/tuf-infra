@@ -10,7 +10,9 @@ repo_dir=$(/usr/bin/readlink -f "$(/usr/bin/dirname "$0")/..")
 readonly repo_dir
 readonly source_snippet=$repo_dir/nginx/tuf-csp.conf
 readonly target_snippet=/etc/nginx/snippets/tuf-csp.conf
-readonly backup_dir=/var/backups/tuf/nginx-csp-$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)
+backup_timestamp=$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)
+readonly backup_timestamp
+readonly backup_dir=/var/backups/tuf/nginx-csp-$backup_timestamp
 readonly sites=(
   /etc/nginx/sites-available/tuforums.com
   /etc/nginx/sites-enabled/tuforums.com
@@ -36,7 +38,9 @@ restore_on_failure() {
     else
       /usr/bin/rm -f "$target_snippet"
     fi
-    /usr/sbin/nginx -t >/dev/null 2>&1 && /usr/bin/systemctl reload nginx || true
+    if /usr/sbin/nginx -t >/dev/null 2>&1; then
+      /usr/bin/systemctl reload nginx || true
+    fi
   fi
 
   exit "$status"
