@@ -8,6 +8,7 @@ Infrastructure configuration for The Universal Forums production environment.
 - `bin/`: Frontend and backend image deployment scripts
 - `sudoers/`: Deployment permissions for the `tuf-deploy` account
 - `config/`: Example server environment files
+- `nginx/`: Root-owned Nginx snippets installed on the production host
 
 Frontend and backend images are stored in GHCR. The server pulls and runs these images instead of building them locally. Host Nginx handles public HTTPS traffic, while MySQL, Redis, and Elasticsearch remain host services.
 
@@ -48,3 +49,26 @@ continue through the root-owned, sudo-allowlisted scripts.
 Google service-account JSON file. `tuf-init` installs it under
 `/srv/tuf/config/secrets` with read access limited to root and the runtime GID.
 Canary data is stored separately in `/srv/tuf-canary/data`.
+
+## Nginx CSP
+
+The production CSP is stored in `nginx/tuf-csp.conf`. It permits the frontend to
+connect to TUFHelperLite only on `127.0.0.1` ports `32145` through `32155`.
+
+Apply it from a trusted checkout as root:
+
+```sh
+sudo bin/tuf-install-nginx-csp
+```
+
+The installer requires exactly one existing `Content-Security-Policy` directive
+in both `/etc/nginx/sites-available/tuforums.com` and
+`/etc/nginx/sites-enabled/tuforums.com`. It backs up both files and the previous
+snippet under `/var/backups/tuf/nginx-csp-<UTC timestamp>`, installs the managed
+snippet, runs `nginx -t`, and reloads Nginx only after validation succeeds. A
+failed validation restores the backup automatically.
+
+To roll back a successful installation, copy the two saved site files (and the
+saved snippet when present) from the reported backup directory to their original
+paths. Remove `/etc/nginx/snippets/tuf-csp.conf` when the backup contains no
+previous snippet, then run `nginx -t && systemctl reload nginx`.

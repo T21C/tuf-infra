@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ $EUID -ne 0 ]]; then
+  echo "run this command as root" >&2
+  exit 77
+fi
+
+repo_dir=$(/usr/bin/readlink -f "$(/usr/bin/dirname "$0")/..")
+readonly repo_dir
+readonly source_snippet=$repo_dir/nginx/tuf-csp.conf
+readonly target_snippet=/etc/nginx/snippets/tuf-csp.conf
+readonly backup_dir=/var/backups/tuf/nginx-csp-$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)
+readonly sites=(
+  /etc/nginx/sites-available/tuforums.com
+  /etc/nginx/sites-enabled/tuforums.com
+)
+
+backup_ready=0
+snippet_existed=0
+
+csp_directive_count() {
+  /usr/bin/awk '$1 == "add_header" && $2 == "Content-Security-Policy" { count++ } END { print count + 0 }' "$1"
+}
+
+restore_on_failure() {
+  local status=$1
+  trap - EXIT INT TERM
+
+  if (( status != 0 && backup_ready == 1 )); then
+    echo "CSP installation failed; restoring Nginx configuration" >&2
+    /usr/bin/cp -a "$backup_dir/sites-available.tuforums.com" "${sites[0]}"
+    /usr/bin/cp -a "$backup_dir/sites-enabled.tuforums.com" "${sites[1]}"
+    if (( snippet_existed == 1 )); then
+      /usr/bin/cp -a "$backup_dir/tuf-csp.conf" "$target_snippet"
+    else
+      /usr/bin/rm -f "$target_snippet"
+    fi
+    /usr/sbin/nginx -t >/dev/null 2>&1 && /usr/bin/systemctl reload nginx || true
+  fi
+
+  exit "$status"
+}
+
+trap 'restore_on_failure $?' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+[[ -f $source_snippet ]] || {
+  echo "missing CSP snippet: $source_snippet" >&2
+  exit 66
+}
+[[ $(csp_directive_count "$source_snippet") == 1 ]] || {
+  echo "CSP snippet must contain exactly one Content-Security-Policy directive" >&2
+  exit 65
+}
+
+for site in "${sites[@]}"; do
+  [[ -f $site ]] || {
+    echo "missing Nginx site: $site" >&2
+    exit 66
+  }
+  [[ $(csp_directive_count "$site") == 1 ]] || {
+    echo "$site must contain exactly one Content-Security-Policy directive" >&2
+    exit 65
+  }
+done
+
+/usr/bin/install -d -m 0700 -o root -g root "$backup_dir"
+/usr/bin/cp -a "${sites[0]}" "$backup_dir/sites-available.tuforums.com"
+/usr/bin/cp -a "${sites[1]}" "$backup_dir/sites-enabled.tuforums.com"
+if [[ -e $target_snippet ]]; then
+  snippet_existed=1
+  /usr/bin/cp -a "$target_snippet" "$backup_dir/tuf-csp.conf"
+fi
+backup_ready=1
+
+/usr/bin/install -d -m 0755 -o root -g root /etc/nginx/snippets
+/usr/bin/install -m 0644 -o root -g root "$source_snippet" "$target_snippet"
+
+for index in "${!sites[@]}"; do
+  site=${sites[$index]}
+  generated=$backup_dir/generated-$index.conf
+  /usr/bin/awk '
+    $1 == "add_header" && $2 == "Content-Security-Policy" {
+      match($0, /^[[:space:]]*/)
+      print substr($0, RSTART, RLENGTH) "include /etc/nginx/snippets/tuf-csp.conf;"
+      next
+    }
+    { print }
+  ' "$site" >"$generated"
+  /usr/bin/install -m 0644 -o root -g root "$generated" "$site"
+done
+
+/usr/sbin/nginx -t
+/usr/bin/systemctl reload nginx
+
+backup_ready=0
+echo "Nginx CSP installed; backup: $backup_dir"

@@ -31,6 +31,7 @@ jobs:
           bin/tuf-deploy-frontend
           bin/tuf-deploy-canary
           bin/tuf-recreate
+          bin/tuf-install-nginx-csp
           bin/tuf-init
           bin/tuf-init-canary
           bin/tuf-seed-production-mapping-hashes

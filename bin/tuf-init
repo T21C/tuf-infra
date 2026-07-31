@@ -90,6 +90,7 @@ done
 /usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-deploy-backend" /usr/local/sbin/tuf-deploy-backend
 /usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-deploy-frontend" /usr/local/sbin/tuf-deploy-frontend
 /usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-recreate" /usr/local/sbin/tuf-recreate
+/usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-install-nginx-csp" /usr/local/sbin/tuf-install-nginx-csp
 
 /usr/sbin/visudo -cf "$repo_dir/sudoers/tuf-deploy"
 /usr/bin/install -m 0440 -o root -g root "$repo_dir/sudoers/tuf-deploy" /etc/sudoers.d/tuf-deploy
