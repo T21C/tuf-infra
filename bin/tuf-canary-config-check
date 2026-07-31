@@ -68,6 +68,7 @@ require_value "$canary_dir/common.env" WORKSPACE_ROOT /srv/tuf/data/cdn-temp/tuf
 require_value "$canary_dir/api.env" CACHE_PATH /srv/tuf/data/cache
 require_value "$canary_dir/api.env" THUMBNAILS_CACHE_PATH /srv/tuf/data/thumbnails
 require_value "$canary_dir/api.env" MYSQL_BACKUP_PATH /srv/tuf/data/backups/mysql
+require_value "$canary_dir/api.env" MYSQL_BACKUP_TEMP_PATH /srv/tuf/data/backups/tmp
 require_value "$canary_dir/api.env" FILES_BACKUP_PATH /srv/tuf/data/backups/files
 require_value "$canary_dir/api.env" ROOT_PATH /app
 require_value "$canary_dir/api.env" ELASTICSEARCH_CA_PATH /run/secrets/elasticsearch-ca.crt

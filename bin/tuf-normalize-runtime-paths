@@ -33,6 +33,7 @@ normalize_stack() {
   upsert "$config_dir/api.env" CACHE_PATH "$data_root/cache"
   upsert "$config_dir/api.env" THUMBNAILS_CACHE_PATH "$data_root/thumbnails"
   upsert "$config_dir/api.env" MYSQL_BACKUP_PATH "$data_root/backups/mysql"
+  upsert "$config_dir/api.env" MYSQL_BACKUP_TEMP_PATH "$data_root/backups/tmp"
   upsert "$config_dir/api.env" FILES_BACKUP_PATH "$data_root/backups/files"
   upsert "$config_dir/api.env" ROOT_PATH /app
   upsert "$config_dir/api.env" ELASTICSEARCH_CA_PATH /run/secrets/elasticsearch-ca.crt
