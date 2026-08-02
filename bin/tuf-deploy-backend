@@ -47,7 +47,14 @@ rollback() {
 }
 
 set_tag "$requested_tag"
-if ! "${COMPOSE[@]}" pull api cdn cdc health; then
+if ! "${COMPOSE[@]}" --profile migrate pull api cdn cdc health migrate; then
+  rollback
+  exit 1
+fi
+
+# Apply pending Sequelize migrations with the new image before rolling services.
+# Profile keeps `migrate` out of `compose up`; `run` still executes it.
+if ! "${COMPOSE[@]}" --profile migrate run --rm --no-deps migrate; then
   rollback
   exit 1
 fi

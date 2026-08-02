@@ -63,6 +63,7 @@ jobs:
           docker compose
           --env-file config/stack.env.example
           --file compose.yml
+          --profile migrate
           config
           --no-env-resolution
           --quiet

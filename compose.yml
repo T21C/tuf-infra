@@ -25,6 +25,19 @@ x-backend-service: &backend-service
       max-file: "5"
 
 services:
+  # One-shot schema migrate (invoked by tuf-deploy-backend; not started with `up`)
+  migrate:
+    <<: *backend-service
+    profiles: [migrate]
+    restart: "no"
+    # Direct binary — avoid `npm run` writing under read_only rootfs
+    command: ["./node_modules/.bin/sequelize-cli", "db:migrate"]
+    env_file:
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/redis.env
+    mem_limit: 512m
+    pids_limit: 128
+
   frontend:
     image: ghcr.io/t21c/t21c-web-frontend:${TUF_FRONTEND_IMAGE_TAG:?set TUF_FRONTEND_IMAGE_TAG in stack.env}
     user: "${TUF_RUNTIME_UID:-10001}:${TUF_RUNTIME_GID:-10001}"
