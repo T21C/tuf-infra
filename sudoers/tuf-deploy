@@ -1,2 +1,10 @@
-Cmnd_Alias TUF_DEPLOY = /usr/local/sbin/tuf-deploy-backend *, /usr/local/sbin/tuf-deploy-frontend *, /usr/local/sbin/tuf-deploy-canary *, /usr/local/sbin/tuf-recreate *, /usr/local/sbin/tuf-sync-infra *
+# Prefer the live checkout. Keep /usr/local/sbin wrappers allowlisted so PATH/systemd
+# and older muscle-memory invocations still work (wrappers exec the /srv paths).
+Cmnd_Alias TUF_DEPLOY = \
+  /srv/tuf/infra/bin/tuf-deploy-backend *, /srv/tuf/infra/bin/tuf-deploy-frontend *, \
+  /srv/tuf/infra/bin/tuf-deploy-canary *, /srv/tuf/infra/bin/tuf-recreate *, \
+  /srv/tuf/infra/bin/tuf-sync-infra *, \
+  /usr/local/sbin/tuf-deploy-backend *, /usr/local/sbin/tuf-deploy-frontend *, \
+  /usr/local/sbin/tuf-deploy-canary *, /usr/local/sbin/tuf-recreate *, \
+  /usr/local/sbin/tuf-sync-infra *
 tuf-deploy ALL=(root) NOPASSWD: TUF_DEPLOY

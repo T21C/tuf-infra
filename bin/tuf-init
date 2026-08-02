@@ -86,19 +86,33 @@ done
 /usr/bin/chown tuf-deploy:tuf-deploy /home/tuf-deploy/.ssh/authorized_keys
 /usr/bin/chmod 0600 /home/tuf-deploy/.ssh/authorized_keys
 
-/usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-config-check" /usr/local/sbin/tuf-config-check
-/usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-deploy-backend" /usr/local/sbin/tuf-deploy-backend
-/usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-deploy-frontend" /usr/local/sbin/tuf-deploy-frontend
-/usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-recreate" /usr/local/sbin/tuf-recreate
-/usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-sync-infra" /usr/local/sbin/tuf-sync-infra
+install_sbin_wrapper() {
+  local name=$1
+  local target=$repo_dir/bin/$name
+  [[ -x $target ]] || {
+    echo "missing executable $target" >&2
+    exit 66
+  }
+  # Always exec the live checkout path so /usr/local/sbin cannot drift from /srv/tuf/infra.
+  /usr/bin/install -m 0755 -o root -g root /dev/stdin "/usr/local/sbin/$name" <<EOF
+#!/bin/sh
+exec /srv/tuf/infra/bin/$name "\$@"
+EOF
+}
+
+install_sbin_wrapper tuf-config-check
+install_sbin_wrapper tuf-deploy-backend
+install_sbin_wrapper tuf-deploy-frontend
+install_sbin_wrapper tuf-recreate
+install_sbin_wrapper tuf-sync-infra
+install_sbin_wrapper tuf-install-nginx-csp
 /usr/bin/install -d -m 0755 -o root -g root /usr/local/share/tuf
 /usr/bin/install -m 0644 -o root -g root "$repo_dir/nginx/tuf-csp.conf" /usr/local/share/tuf/tuf-csp.conf
-/usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-install-nginx-csp" /usr/local/sbin/tuf-install-nginx-csp
 
 /usr/sbin/visudo -cf "$repo_dir/sudoers/tuf-deploy"
 /usr/bin/install -m 0440 -o root -g root "$repo_dir/sudoers/tuf-deploy" /etc/sudoers.d/tuf-deploy
 /usr/bin/install -m 0644 -o root -g root "$repo_dir/systemd/tuf-stack.service" /etc/systemd/system/tuf-stack.service
 /usr/bin/systemctl daemon-reload
 
-/usr/local/sbin/tuf-config-check
+/srv/tuf/infra/bin/tuf-config-check
 echo "host initialized; enable the stack with: systemctl enable --now tuf-stack.service"

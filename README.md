@@ -43,39 +43,49 @@ Environment values and credentials belong only in `/srv/tuf/config` and must not
 
 ## Keeping host infra in sync
 
-App deploys only call `/usr/local/sbin/tuf-deploy-*`. Those scripts and
-`/srv/tuf/infra/compose.yml` come from this repo’s checkout on the host, so a
-git push alone does not update production until the checkout and sbin copies
-are refreshed.
+Deploy entrypoints live in the host checkout at `/srv/tuf/infra/bin/*`.
+GitHub Actions call those paths directly (for example
+`sudo /srv/tuf/infra/bin/tuf-deploy-backend <sha>`). Copies under
+`/usr/local/sbin` are thin `exec` wrappers only, so they cannot silently
+drift from the checkout the way full script copies did.
 
-After bootstrap, prefer the Actions workflow `Sync production infra`
-(`.github/workflows/sync-production.yml`). On each push to `main` (when
-`PRODUCTION_DEPLOY_ENABLED` is true) it SSHes as `tuf-deploy` and runs:
+On each push to `main` (when repository variable `PRODUCTION_DEPLOY_ENABLED`
+is exactly `true`), workflow `Sync production infra` SSHes as `tuf-deploy` and
+runs:
 
 ```sh
-sudo /usr/local/sbin/tuf-sync-infra <git-sha>
+sudo /srv/tuf/infra/bin/tuf-sync-infra <git-sha>
 ```
 
 That command:
 
 - `git fetch` + detach `/srv/tuf/infra` to the exact SHA
-- reinstalls deploy scripts under `/usr/local/sbin`
-- refreshes sudoers and systemd unit files
+- refreshes `/usr/local/sbin` wrappers, sudoers, and systemd units
 - validates `compose.yml` against live `stack.env`
 - never overwrites `/srv/tuf/config/*.env`
 
-**One-time enablement** (root on the host), before the workflow can succeed:
+If `PRODUCTION_DEPLOY_ENABLED` is unset/false, the workflow **fails** instead of
+quietly succeeding with no host update. The `tuf-infra` repo must also have the
+same Tailscale + `TUF_DEPLOY_SSH_*` secrets as the app deploy workflows.
+
+**One-time enablement** (root on the host), before the first Actions sync can
+succeed — allowlist the checkout paths and install wrappers:
 
 ```sh
 cd /srv/tuf/infra
 git pull
-install -m 0755 -o root -g root bin/tuf-sync-infra /usr/local/sbin/tuf-sync-infra
 visudo -cf sudoers/tuf-deploy
 install -m 0440 -o root -g root sudoers/tuf-deploy /etc/sudoers.d/tuf-deploy
+# Optional immediate wrapper refresh without waiting for Actions:
+./bin/tuf-sync-infra "$(git rev-parse HEAD)"
 ```
 
 Ensure `origin` for `/srv/tuf/infra` is fetchable as root (deploy key or
 equivalent). The sync script fails loudly if fetch cannot see the requested SHA.
+
+Until app repos pick up workflows that call `/srv/tuf/infra/bin/...`, you can
+still deploy via the wrappers once `tuf-sync-infra` has rewritten
+`/usr/local/sbin/tuf-deploy-*` to `exec` the checkout scripts.
 
 Install Docker Engine and Compose once as root with `bin/tuf-install-docker`. The
 script deliberately does not add `tuf-deploy` to the `docker` group; deployments

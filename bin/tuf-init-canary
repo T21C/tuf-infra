@@ -79,13 +79,26 @@ done
   /srv/tuf-canary/data/backups \
   /srv/tuf-canary/data/mapping-hashes
 
-/usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-canary-config-check" /usr/local/sbin/tuf-canary-config-check
-/usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-deploy-canary" /usr/local/sbin/tuf-deploy-canary
-/usr/bin/install -m 0755 -o root -g root "$repo_dir/bin/tuf-recreate" /usr/local/sbin/tuf-recreate
+install_sbin_wrapper() {
+  local name=$1
+  local target=$repo_dir/bin/$name
+  [[ -x $target ]] || {
+    echo "missing executable $target" >&2
+    exit 66
+  }
+  /usr/bin/install -m 0755 -o root -g root /dev/stdin "/usr/local/sbin/$name" <<EOF
+#!/bin/sh
+exec /srv/tuf/infra/bin/$name "\$@"
+EOF
+}
+
+install_sbin_wrapper tuf-canary-config-check
+install_sbin_wrapper tuf-deploy-canary
+install_sbin_wrapper tuf-recreate
 /usr/bin/install -m 0644 -o root -g root "$repo_dir/systemd/tuf-canary.service" /etc/systemd/system/tuf-canary.service
 /usr/sbin/visudo -cf "$repo_dir/sudoers/tuf-deploy"
 /usr/bin/install -m 0440 -o root -g root "$repo_dir/sudoers/tuf-deploy" /etc/sudoers.d/tuf-deploy
 /usr/bin/systemctl daemon-reload
-/usr/local/sbin/tuf-canary-config-check
+/srv/tuf/infra/bin/tuf-canary-config-check
 
 echo "canary initialized; start it with: systemctl start tuf-canary.service"

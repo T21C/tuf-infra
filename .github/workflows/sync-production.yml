@@ -16,8 +16,17 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
+      - name: Require production sync enabled
+        env:
+          ENABLED: ${{ vars.PRODUCTION_DEPLOY_ENABLED }}
+        run: |
+          set -euo pipefail
+          if [[ "${ENABLED}" != "true" ]]; then
+            echo "::error::Repository variable PRODUCTION_DEPLOY_ENABLED must be 'true' (got '${ENABLED:-<unset>}'). Without it this workflow no-ops and the host stays stale."
+            exit 1
+          fi
+
       - name: Connect to Tailscale
-        if: ${{ vars.PRODUCTION_DEPLOY_ENABLED == 'true' }}
         uses: tailscale/github-action@v4
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
@@ -26,21 +35,22 @@ jobs:
           ping: tuf-main-server
 
       - name: Configure deploy SSH identity
-        if: ${{ vars.PRODUCTION_DEPLOY_ENABLED == 'true' }}
         env:
           DEPLOY_KEY: ${{ secrets.TUF_DEPLOY_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.TUF_DEPLOY_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
+          [[ -n "${DEPLOY_KEY}" ]] || { echo "::error::secret TUF_DEPLOY_SSH_KEY is empty" >&2; exit 1; }
+          [[ -n "${KNOWN_HOSTS}" ]] || { echo "::error::secret TUF_DEPLOY_KNOWN_HOSTS is empty" >&2; exit 1; }
           install -m 700 -d ~/.ssh
           install -m 600 /dev/null ~/.ssh/id_ed25519
           printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
           install -m 600 /dev/null ~/.ssh/known_hosts
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
 
-      - name: Sync infra checkout and sbin scripts
-        if: ${{ vars.PRODUCTION_DEPLOY_ENABLED == 'true' }}
+      - name: Sync infra checkout
         run: |
           set -euo pipefail
+          # Prefer the checkout path so a stale /usr/local/sbin copy cannot block sync.
           ssh -i ~/.ssh/id_ed25519 tuf-deploy@tuf-main-server \
-            "sudo /usr/local/sbin/tuf-sync-infra '${{ github.sha }}'"
+            "sudo /srv/tuf/infra/bin/tuf-sync-infra '${{ github.sha }}'"

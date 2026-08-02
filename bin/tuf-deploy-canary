@@ -26,7 +26,7 @@ exec 9>"$lock_file"
   exit 75
 }
 
-/usr/local/sbin/tuf-canary-config-check
+/srv/tuf/infra/bin/tuf-canary-config-check
 previous_tag=$(/usr/bin/awk -F= -v key="$tag_key" '$1 == key { print $2; exit }' "$stack_env")
 [[ -n $previous_tag ]] || {
   echo "$tag_key is missing from $stack_env" >&2

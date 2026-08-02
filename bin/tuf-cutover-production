@@ -143,17 +143,17 @@ trap on_exit EXIT
 trap 'exit 130' INT TERM
 
 echo "[1/9] validating configuration"
-/usr/local/sbin/tuf-config-check
+/srv/tuf/infra/bin/tuf-config-check
 "${compose[@]}" config --quiet
 /usr/sbin/nginx -t
 
 echo "[2/9] deploying the production frontend off-traffic"
-/usr/local/sbin/tuf-deploy-frontend "$frontend_tag"
+/srv/tuf/infra/bin/tuf-deploy-frontend "$frontend_tag"
 wait_for_url frontend http://127.0.0.1:8080/healthz 30
 
 echo "[3/9] pulling backend and refreshing mapping hashes"
 /usr/bin/docker pull "ghcr.io/t21c/tuf-backend:$backend_tag"
-/usr/local/sbin/tuf-seed-production-mapping-hashes
+/srv/tuf/infra/bin/tuf-seed-production-mapping-hashes
 /usr/bin/docker run --rm \
   --network host \
   --user 10001:10001 \
@@ -191,7 +191,7 @@ legacy_stopped=1
 stop_service_listeners
 
 echo "[6/9] deploying production backend containers"
-/usr/local/sbin/tuf-deploy-backend "$backend_tag"
+/srv/tuf/infra/bin/tuf-deploy-backend "$backend_tag"
 wait_for_url api http://127.0.0.1:3000/v2/health 30
 wait_for_url cdn http://127.0.0.1:3001/health 30
 wait_for_url health http://127.0.0.1:3883/health/api 30

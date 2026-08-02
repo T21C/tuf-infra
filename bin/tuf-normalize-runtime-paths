@@ -57,6 +57,6 @@ upsert /srv/tuf/config/canary/health.env LOG_PATH /tmp/tuf-health-logs
 upsert /srv/tuf/config/canary/health.env HEALTH_MAIN_SERVER_URL http://127.0.0.1:13000/v2/health
 upsert /srv/tuf/config/canary/health.env HEALTH_CDN_URL http://127.0.0.1:13001/health
 
-/usr/local/sbin/tuf-config-check
-/usr/local/sbin/tuf-canary-config-check
+/srv/tuf/infra/bin/tuf-config-check
+/srv/tuf/infra/bin/tuf-canary-config-check
 echo "container runtime paths normalized"
