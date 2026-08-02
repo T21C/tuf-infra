@@ -146,3 +146,16 @@ services:
       start_period: 30s
     mem_limit: 256m
     pids_limit: 128
+
+  # One-shot schema migration, not part of the running stack. The profile keeps it out
+  # of `compose up`; tuf-deploy-backend invokes it with `compose run --rm` after the new
+  # image is pulled and before services are recreated.
+  migrate:
+    <<: *backend-service
+    profiles: ["tools"]
+    restart: "no"
+    command: ["node", "node_modules/sequelize-cli/lib/sequelize", "db:migrate", "--env", "production"]
+    env_file:
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
+    mem_limit: 512m
+    pids_limit: 128

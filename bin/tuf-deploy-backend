@@ -52,6 +52,15 @@ if ! "${COMPOSE[@]}" pull api cdn cdc health; then
   exit 1
 fi
 
+# Migrate on the new image before the old containers are replaced. Services are still
+# running the previous tag here, so migrations must be forward-compatible (expand now,
+# drop columns in a later release).
+if ! "${COMPOSE[@]}" run --rm --no-deps migrate; then
+  echo "database migration failed; not recreating services" >&2
+  rollback
+  exit 1
+fi
+
 if ! "${COMPOSE[@]}" up -d --remove-orphans --wait api cdn cdc health; then
   rollback
   exit 1
