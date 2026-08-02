@@ -41,6 +41,42 @@ Frontend and backend images are stored in GHCR. The server pulls and runs these 
 
 Environment values and credentials belong only in `/srv/tuf/config` and must not be committed to Git.
 
+## Keeping host infra in sync
+
+App deploys only call `/usr/local/sbin/tuf-deploy-*`. Those scripts and
+`/srv/tuf/infra/compose.yml` come from this repo’s checkout on the host, so a
+git push alone does not update production until the checkout and sbin copies
+are refreshed.
+
+After bootstrap, prefer the Actions workflow `Sync production infra`
+(`.github/workflows/sync-production.yml`). On each push to `main` (when
+`PRODUCTION_DEPLOY_ENABLED` is true) it SSHes as `tuf-deploy` and runs:
+
+```sh
+sudo /usr/local/sbin/tuf-sync-infra <git-sha>
+```
+
+That command:
+
+- `git fetch` + detach `/srv/tuf/infra` to the exact SHA
+- reinstalls deploy scripts under `/usr/local/sbin`
+- refreshes sudoers and systemd unit files
+- validates `compose.yml` against live `stack.env`
+- never overwrites `/srv/tuf/config/*.env`
+
+**One-time enablement** (root on the host), before the workflow can succeed:
+
+```sh
+cd /srv/tuf/infra
+git pull
+install -m 0755 -o root -g root bin/tuf-sync-infra /usr/local/sbin/tuf-sync-infra
+visudo -cf sudoers/tuf-deploy
+install -m 0440 -o root -g root sudoers/tuf-deploy /etc/sudoers.d/tuf-deploy
+```
+
+Ensure `origin` for `/srv/tuf/infra` is fetchable as root (deploy key or
+equivalent). The sync script fails loudly if fetch cannot see the requested SHA.
+
 Install Docker Engine and Compose once as root with `bin/tuf-install-docker`. The
 script deliberately does not add `tuf-deploy` to the `docker` group; deployments
 continue through the root-owned, sudo-allowlisted scripts.

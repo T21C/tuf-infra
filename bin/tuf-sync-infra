@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Refresh the live host checkout and reinstall root-owned deploy tooling from it.
+# Does NOT touch /srv/tuf/config/*.env (unlike tuf-init).
+#
+# First enablement on a host still needs a one-time root install of this script and
+# an updated /etc/sudoers.d/tuf-deploy that allowlists it; after that, Actions can
+# keep /usr/local/sbin and /srv/tuf/infra in lockstep with git SHAs.
+
+readonly INFRA_DIR=/srv/tuf/infra
+readonly STACK_ENV=/srv/tuf/config/stack.env
+readonly LOCK_FILE=/run/lock/tuf-deploy.lock
+
+if [[ $EUID -ne 0 ]]; then
+  echo "run this command as root" >&2
+  exit 77
+fi
+
+if [[ $# -ne 1 || ! $1 =~ ^[0-9a-f]{40}$ ]]; then
+  echo "usage: tuf-sync-infra <full-git-sha>" >&2
+  exit 64
+fi
+
+readonly requested_sha=$1
+
+exec 9>"$LOCK_FILE"
+/usr/bin/flock -w 900 9 || {
+  echo "timed out waiting for another TUF deployment to finish" >&2
+  exit 75
+}
+
+if [[ ! -d $INFRA_DIR/.git ]]; then
+  echo "$INFRA_DIR is not a git checkout of tuf-infra" >&2
+  exit 66
+fi
+
+if [[ ! -f $STACK_ENV ]]; then
+  echo "missing $STACK_ENV" >&2
+  exit 66
+fi
+
+cd "$INFRA_DIR"
+
+if ! /usr/bin/git fetch --prune origin; then
+  echo "git fetch failed; ensure origin is reachable as root from $INFRA_DIR" >&2
+  exit 69
+fi
+
+if ! /usr/bin/git cat-file -t "$requested_sha" >/dev/null 2>&1; then
+  echo "unknown git object: $requested_sha (fetch origin and retry)" >&2
+  exit 65
+fi
+
+/usr/bin/git checkout --detach --quiet "$requested_sha"
+
+install_sbin() {
+  local source=$1
+  local name
+  name=$(/usr/bin/basename "$source")
+  /usr/bin/install -m 0755 -o root -g root "$source" "/usr/local/sbin/$name"
+}
+
+# Same production tooling tuf-init installs, plus this sync entrypoint (self-update).
+install_sbin "$INFRA_DIR/bin/tuf-config-check"
+install_sbin "$INFRA_DIR/bin/tuf-deploy-backend"
+install_sbin "$INFRA_DIR/bin/tuf-deploy-frontend"
+install_sbin "$INFRA_DIR/bin/tuf-recreate"
+install_sbin "$INFRA_DIR/bin/tuf-install-nginx-csp"
+install_sbin "$INFRA_DIR/bin/tuf-sync-infra"
+
+# Canary tooling is optional on hosts that never ran tuf-init-canary.
+if [[ -f $INFRA_DIR/bin/tuf-deploy-canary ]]; then
+  install_sbin "$INFRA_DIR/bin/tuf-deploy-canary"
+fi
+if [[ -f $INFRA_DIR/bin/tuf-canary-config-check ]]; then
+  install_sbin "$INFRA_DIR/bin/tuf-canary-config-check"
+fi
+
+/usr/bin/install -d -m 0755 -o root -g root /usr/local/share/tuf
+/usr/bin/install -m 0644 -o root -g root "$INFRA_DIR/nginx/tuf-csp.conf" /usr/local/share/tuf/tuf-csp.conf
+
+/usr/sbin/visudo -cf "$INFRA_DIR/sudoers/tuf-deploy"
+/usr/bin/install -m 0440 -o root -g root "$INFRA_DIR/sudoers/tuf-deploy" /etc/sudoers.d/tuf-deploy
+
+/usr/bin/install -m 0644 -o root -g root "$INFRA_DIR/systemd/tuf-stack.service" /etc/systemd/system/tuf-stack.service
+if [[ -f $INFRA_DIR/systemd/tuf-canary.service ]]; then
+  /usr/bin/install -m 0644 -o root -g root "$INFRA_DIR/systemd/tuf-canary.service" /etc/systemd/system/tuf-canary.service
+fi
+/usr/bin/systemctl daemon-reload
+
+# Prove the refreshed compose still resolves against live stack.env (no service bounce).
+/usr/bin/docker compose --env-file "$STACK_ENV" -f "$INFRA_DIR/compose.yml" config --quiet
+
+echo "infra synced: $requested_sha"

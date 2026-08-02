@@ -1,0 +1,46 @@
+name: Sync production infra
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tuf-infra-production
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Connect to Tailscale
+        if: ${{ vars.PRODUCTION_DEPLOY_ENABLED == 'true' }}
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:gh-runner
+          ping: tuf-main-server
+
+      - name: Configure deploy SSH identity
+        if: ${{ vars.PRODUCTION_DEPLOY_ENABLED == 'true' }}
+        env:
+          DEPLOY_KEY: ${{ secrets.TUF_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.TUF_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          install -m 600 /dev/null ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          install -m 600 /dev/null ~/.ssh/known_hosts
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Sync infra checkout and sbin scripts
+        if: ${{ vars.PRODUCTION_DEPLOY_ENABLED == 'true' }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 tuf-deploy@tuf-main-server \
+            "sudo /usr/local/sbin/tuf-sync-infra '${{ github.sha }}'"
