@@ -12,8 +12,9 @@ x-backend-service: &backend-service
     - no-new-privileges:true
   cap_drop:
     - ALL
+  # Default scratch; services that need more (puppeteer) override. tmpfs counts toward mem_limit.
   tmpfs:
-    - /tmp:rw,nosuid,nodev,size=512m,uid=${TUF_RUNTIME_UID:-10001},gid=${TUF_RUNTIME_GID:-10001},mode=1770
+    - /tmp:rw,nosuid,nodev,size=256m,uid=${TUF_RUNTIME_UID:-10001},gid=${TUF_RUNTIME_GID:-10001},mode=1770
   env_file:
     - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
   environment:
@@ -57,9 +58,14 @@ services:
   api:
     <<: *backend-service
     command: ["node", "dist/app.js"]
+    # Puppeteer uses /tmp (--disable-dev-shm-usage); keep headroom under mem_limit.
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=512m,uid=${TUF_RUNTIME_UID:-10001},gid=${TUF_RUNTIME_GID:-10001},mode=1770
     environment:
       NODE_ENV: production
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-application-credentials.json
+      # Cap V8 so Chromium/sharp/native buffers retain cgroup headroom (exit 137 = cgroup OOM).
+      NODE_OPTIONS: --max-old-space-size=1280
     env_file:
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/redis.env
@@ -85,12 +91,22 @@ services:
       # A mapping/indexer change can require a one-time full production reindex
       # before the API starts listening. The 2 CPU host needs several minutes.
       start_period: 10m
-    mem_limit: 1536m
+    # Was 1536m; Node+Chromium+ES under load OOM-killed (exit 137). memswap_limit
+    # = mem + ~768m swap cushion (requires host swap; else equals mem_limit behavior).
+    mem_limit: 2560m
+    memswap_limit: 3328m
     pids_limit: 512
 
   cdn:
     <<: *backend-service
     command: ["node", "dist/externalServices/cdnService/app.js"]
+    # Heavy scratch lives on the cdn-temp volume; keep tmpfs small vs mem_limit.
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=128m,uid=${TUF_RUNTIME_UID:-10001},gid=${TUF_RUNTIME_GID:-10001},mode=1770
+    environment:
+      NODE_ENV: production
+      # Leave room for sharp/native + zip buffers (exit 134 = V8 abort / heap OOM).
+      NODE_OPTIONS: --max-old-space-size=1024
     env_file:
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/storage.env
@@ -104,7 +120,9 @@ services:
       timeout: 5s
       retries: 8
       start_period: 30s
-    mem_limit: 1024m
+    # Was 1024m; image/zip work aborted under pressure (exit 134).
+    mem_limit: 1536m
+    memswap_limit: 2048m
     pids_limit: 384
 
   cdc:
@@ -123,6 +141,7 @@ services:
       retries: 8
       start_period: 30s
     mem_limit: 384m
+    memswap_limit: 512m
     pids_limit: 192
 
   health:
@@ -145,6 +164,7 @@ services:
       retries: 8
       start_period: 30s
     mem_limit: 256m
+    memswap_limit: 320m
     pids_limit: 128
 
   # One-shot schema migration, not part of the running stack. The profile keeps it out
@@ -158,4 +178,5 @@ services:
     env_file:
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
     mem_limit: 512m
+    memswap_limit: 640m
     pids_limit: 128
