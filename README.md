@@ -91,6 +91,22 @@ Install Docker Engine and Compose once as root with `bin/tuf-install-docker`. Th
 script deliberately does not add `tuf-deploy` to the `docker` group; deployments
 continue through the root-owned, sudo-allowlisted scripts.
 
+## Image prune cron
+
+SHA-tagged deploys leave old GHCR layers under containerd until pruned. Install a
+daily cleanup that keeps the newest image plus two older tags per repo (for
+rollback), and never removes tags referenced by running containers or
+`stack.env` / canary `stack.env`:
+
+```sh
+sudo /srv/tuf/infra/bin/tuf-prune-images install-cron
+```
+
+That writes `/etc/cron.d/tuf-prune-images` (daily 03:17) and
+`/usr/local/sbin/tuf-prune-images`. Run once immediately with
+`sudo tuf-prune-images`. Override retention with
+`TUF_PRUNE_KEEP_OLDER_TAGS` (default `2`).
+
 `config/stack.env` must point `GOOGLE_APPLICATION_CREDENTIALS_SOURCE_PATH` at a
 Google service-account JSON file. `tuf-init` installs it under
 `/srv/tuf/config/secrets` with read access limited to root and the runtime GID.

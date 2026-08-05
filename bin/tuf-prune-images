@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Prune local GHCR image tags while keeping the newest tags for rollback.
+# Default: current (newest) + KEEP_OLDER_TAGS previous tags per repository.
+#
+# Usage:
+#   tuf-prune-images                 # prune now
+#   tuf-prune-images install-cron    # install daily /etc/cron.d entry
+
+readonly LOCK_FILE=/run/lock/tuf-deploy.lock
+readonly CRON_FILE=/etc/cron.d/tuf-prune-images
+readonly LOG_FILE=/var/log/tuf-prune-images.log
+readonly INFRA_SCRIPT=/srv/tuf/infra/bin/tuf-prune-images
+readonly KEEP_OLDER_TAGS=${TUF_PRUNE_KEEP_OLDER_TAGS:-2}
+readonly REPOS=(
+  ghcr.io/t21c/tuf-backend
+  ghcr.io/t21c/t21c-web-frontend
+)
+
+if [[ $EUID -ne 0 ]]; then
+  echo "run this command as root" >&2
+  exit 77
+fi
+
+usage() {
+  echo "usage: tuf-prune-images [install-cron]" >&2
+  exit 64
+}
+
+install_cron() {
+  local script=$INFRA_SCRIPT
+  if [[ ! -x $script ]]; then
+    script=$(/usr/bin/readlink -f "${BASH_SOURCE[0]}")
+  fi
+  if [[ ! -x $script ]]; then
+    echo "missing executable prune script at $INFRA_SCRIPT" >&2
+    exit 66
+  fi
+
+  /usr/bin/install -m 0755 -o root -g root /dev/stdin /usr/local/sbin/tuf-prune-images <<EOF
+#!/bin/sh
+exec $script "\$@"
+EOF
+
+  /usr/bin/install -m 0644 -o root -g root /dev/stdin "$CRON_FILE" <<EOF
+# Managed by tuf-prune-images install-cron — keep newest + ${KEEP_OLDER_TAGS} older tags per GHCR repo.
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+17 3 * * * root /usr/local/sbin/tuf-prune-images >>${LOG_FILE} 2>&1
+EOF
+
+  echo "installed $CRON_FILE (daily 03:17, keep newer + ${KEEP_OLDER_TAGS} older tags)"
+  echo "manual run: /usr/local/sbin/tuf-prune-images"
+}
+
+protect_refs() {
+  local env_file key
+  /usr/bin/docker ps -a --format '{{.Image}}' || true
+
+  for env_file in /srv/tuf/config/stack.env /srv/tuf/config/canary/stack.env; do
+    [[ -f $env_file ]] || continue
+    for key in TUF_BACKEND_IMAGE_TAG TUF_FRONTEND_IMAGE_TAG; do
+      /usr/bin/awk -F= -v key="$key" '
+        $1 == key && $2 != "" {
+          if (key ~ /BACKEND/) print "ghcr.io/t21c/tuf-backend:" $2
+          if (key ~ /FRONTEND/) print "ghcr.io/t21c/t21c-web-frontend:" $2
+        }
+      ' "$env_file"
+    done
+  done
+}
+
+image_id_for_ref() {
+  local ref=$1
+  /usr/bin/docker image inspect --format '{{.Id}}' "$ref" 2>/dev/null || true
+}
+
+prune_repo() {
+  local repo=$1
+  local keep_total=$((KEEP_OLDER_TAGS + 1))
+  local -A keep_ids=()
+  local -a ranked_refs=()
+  local created ref id keep_ref epoch kept=0
+
+  echo "pruning $repo (keep newest + ${KEEP_OLDER_TAGS} older)"
+
+  while IFS=$'\t' read -r epoch ref; do
+    [[ -n $ref ]] || continue
+    ranked_refs+=("$ref")
+  done < <(
+    while IFS=$'\t' read -r created ref; do
+      [[ $ref == *:\<none\> ]] && continue
+      epoch=$(/usr/bin/date -u -d "$created" +%s 2>/dev/null) || continue
+      printf '%s\t%s\n' "$epoch" "$ref"
+    done < <(/usr/bin/docker images --format '{{.CreatedAt}}\t{{.Repository}}:{{.Tag}}' "$repo") \
+      | /usr/bin/sort -nr
+  )
+
+  for ref in "${ranked_refs[@]+"${ranked_refs[@]}"}"; do
+    id=$(image_id_for_ref "$ref")
+    [[ -n $id ]] || continue
+    if (( kept < keep_total )); then
+      keep_ids[$id]=1
+      kept=$((kept + 1))
+      echo "  keep  $ref"
+    fi
+  done
+
+  while IFS= read -r keep_ref; do
+    [[ $keep_ref == "$repo":* ]] || continue
+    id=$(image_id_for_ref "$keep_ref")
+    [[ -n $id ]] || continue
+    if [[ -z ${keep_ids[$id]+x} ]]; then
+      keep_ids[$id]=1
+      echo "  keep  $keep_ref (in use / stack.env)"
+    fi
+  done < <(protect_refs | /usr/bin/sort -u)
+
+  for ref in "${ranked_refs[@]+"${ranked_refs[@]}"}"; do
+    id=$(image_id_for_ref "$ref")
+    [[ -n $id ]] || continue
+    [[ -n ${keep_ids[$id]+x} ]] && continue
+    echo "  remove $ref"
+    /usr/bin/docker rmi "$ref" || echo "  warn: could not remove $ref" >&2
+  done
+}
+
+prune_now() {
+  if ! [[ $KEEP_OLDER_TAGS =~ ^[0-9]+$ ]]; then
+    echo "TUF_PRUNE_KEEP_OLDER_TAGS must be a non-negative integer" >&2
+    exit 65
+  fi
+
+  exec 9>"$LOCK_FILE"
+  if ! /usr/bin/flock -n 9; then
+    echo "another TUF deployment is running; skipping prune" >&2
+    exit 75
+  fi
+
+  echo "tuf-prune-images start $(/usr/bin/date -u +%Y-%m-%dT%H:%M:%SZ)"
+  /usr/bin/docker system df || true
+
+  local repo
+  for repo in "${REPOS[@]}"; do
+    prune_repo "$repo"
+  done
+
+  /usr/bin/docker image prune -f >/dev/null
+  /usr/bin/docker builder prune -af --filter until=168h >/dev/null || true
+  /usr/bin/docker system prune -f >/dev/null
+
+  echo "tuf-prune-images done $(/usr/bin/date -u +%Y-%m-%dT%H:%M:%SZ)"
+  /usr/bin/docker system df || true
+}
+
+case "${1:-}" in
+  "")
+    prune_now
+    ;;
+  install-cron)
+    install_cron
+    ;;
+  -h | --help | help)
+    usage
+    ;;
+  *)
+    usage
+    ;;
+esac
