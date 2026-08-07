@@ -71,7 +71,9 @@ if [[ -z ${GITHUB_TOKEN:-} ]]; then
   exit 78
 fi
 
-# Prints body on stdout; sets global API_HTTP_CODE. Does not exit on HTTP errors.
+# Sets API_HTTP_CODE + API_BODY (globals). Do NOT call inside $() — that loses globals.
+API_HTTP_CODE=
+API_BODY=
 api() {
   local method=$1 path=$2
   shift 2
@@ -84,10 +86,10 @@ api() {
     -X "$method" \
     "https://api.github.com${path}" \
     "$@" || true)
-  API_HTTP_CODE=$code
-  cat "$tmp"
+  API_HTTP_CODE=${code:-000}
+  API_BODY=$(cat "$tmp" 2>/dev/null || true)
   rm -f "$tmp"
-  [[ $code =~ ^[23] ]]
+  [[ $API_HTTP_CODE =~ ^[23] ]]
 }
 
 host_reachable() {
@@ -104,8 +106,7 @@ host_reachable() {
 
 # 0 = online, 1 = offline/missing, 2 = API unauthorized/unavailable
 runner_api_status() {
-  local json
-  json=$(api GET "/orgs/${GITHUB_ORG}/actions/runners?per_page=100" || true)
+  api GET "/orgs/${GITHUB_ORG}/actions/runners?per_page=100" || true
   case "$API_HTTP_CODE" in
     401|403)
       log "warn: GitHub runners API HTTP $API_HTTP_CODE (token needs org self-hosted runners read)"
@@ -113,7 +114,7 @@ runner_api_status() {
       ;;
     200) ;;
     *)
-      log "warn: GitHub runners API HTTP ${API_HTTP_CODE:-?}"
+      log "warn: GitHub runners API HTTP ${API_HTTP_CODE}"
       return 2
       ;;
   esac
@@ -121,7 +122,7 @@ runner_api_status() {
     .runners
     | map(select(.name == $name))
     | length > 0 and all(.[]; .status == "online")
-  ' >/dev/null <<<"$json"; then
+  ' >/dev/null <<<"$API_BODY"; then
     return 0
   fi
   return 1
@@ -193,8 +194,7 @@ EOF
 }
 
 get_org_var() {
-  local json
-  json=$(api GET "/orgs/${GITHUB_ORG}/actions/variables/CI_RUNS_ON" || true)
+  api GET "/orgs/${GITHUB_ORG}/actions/variables/CI_RUNS_ON" || true
   if [[ $API_HTTP_CODE == 404 ]]; then
     printf ''
     return 0
@@ -203,7 +203,7 @@ get_org_var() {
     log "error: get org variable HTTP $API_HTTP_CODE"
     return 1
   fi
-  jq -r '.value // empty' <<<"$json"
+  jq -r '.value // empty' <<<"$API_BODY"
 }
 
 set_org_var() {
@@ -219,30 +219,30 @@ set_org_var() {
   if [[ -n $current ]]; then
     api PATCH "/orgs/${GITHUB_ORG}/actions/variables/CI_RUNS_ON" \
       -H 'Content-Type: application/json' \
-      --data "$body" >/dev/null || true
+      --data "$body" || true
   else
     body=$(jq -nc --arg v "$value" '{name:"CI_RUNS_ON",value:$v,visibility:"all"}')
     api POST "/orgs/${GITHUB_ORG}/actions/variables" \
       -H 'Content-Type: application/json' \
-      --data "$body" >/dev/null || true
+      --data "$body" || true
   fi
-  if [[ ${API_HTTP_CODE:-} =~ ^2 ]]; then
+  if [[ $API_HTTP_CODE =~ ^2 ]]; then
     log "set org CI_RUNS_ON -> $value"
     return 0
   fi
-  log "error: set org CI_RUNS_ON HTTP ${API_HTTP_CODE:-?} — token needs org Actions variables write (classic: admin:org)"
+  log "error: set org CI_RUNS_ON HTTP ${API_HTTP_CODE} — token needs org Actions variables write (classic: admin:org)"
   return 1
 }
 
 set_repo_var() {
   local repo=$1 value=$2
   local owner=${repo%/*} name=${repo#*/}
-  local json current body
-  json=$(api GET "/repos/${owner}/${name}/actions/variables/CI_RUNS_ON" || true)
+  local current body
+  api GET "/repos/${owner}/${name}/actions/variables/CI_RUNS_ON" || true
   if [[ $API_HTTP_CODE == 404 ]]; then
     current=
   elif [[ $API_HTTP_CODE == 200 ]]; then
-    current=$(jq -r '.value // empty' <<<"$json")
+    current=$(jq -r '.value // empty' <<<"$API_BODY")
   else
     log "error: get $repo variable HTTP $API_HTTP_CODE"
     return 1
@@ -255,17 +255,17 @@ set_repo_var() {
   if [[ -n $current ]]; then
     api PATCH "/repos/${owner}/${name}/actions/variables/CI_RUNS_ON" \
       -H 'Content-Type: application/json' \
-      --data "$body" >/dev/null || true
+      --data "$body" || true
   else
     api POST "/repos/${owner}/${name}/actions/variables" \
       -H 'Content-Type: application/json' \
-      --data "$body" >/dev/null || true
+      --data "$body" || true
   fi
-  if [[ ${API_HTTP_CODE:-} =~ ^2 ]]; then
+  if [[ $API_HTTP_CODE =~ ^2 ]]; then
     log "set $repo CI_RUNS_ON -> $value"
     return 0
   fi
-  log "error: set $repo CI_RUNS_ON HTTP ${API_HTTP_CODE:-?}"
+  log "error: set $repo CI_RUNS_ON HTTP ${API_HTTP_CODE}"
   return 1
 }
 
