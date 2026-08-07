@@ -1,0 +1,12 @@
+[Unit]
+Description=Run TUF CI runner failover check every 2 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+AccuracySec=30s
+Persistent=true
+Unit=tuf-ci-runner-failover.service
+
+[Install]
+WantedBy=timers.target

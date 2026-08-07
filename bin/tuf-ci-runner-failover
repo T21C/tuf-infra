@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+# Flip GitHub Actions CI_RUNS_ON between self-hosted and ubuntu-latest based on
+# laptop/runner reachability from the production host (Tailscale).
+#
+# Config: /srv/tuf/config/ci-runner-failover.env (see config/ci-runner-failover.env.example)
+set -Eeuo pipefail
+
+readonly CONFIG_FILE="${TUF_CI_FAILOVER_ENV:-/srv/tuf/config/ci-runner-failover.env}"
+
+load_config() {
+  [[ -f $CONFIG_FILE ]] || return 0
+  local line key val
+  while IFS= read -r line || [[ -n $line ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z $line || $line == \#* ]] && continue
+    [[ $line == *=* ]] || continue
+    key=${line%%=*}
+    val=${line#*=}
+    key="${key%"${key##*[![:space:]]}"}"
+    val="${val#"${val%%[![:space:]]*}"}"
+    if [[ $val == \'*\' ]]; then
+      val=${val:1:-1}
+    elif [[ $val == \"*\" ]]; then
+      val=${val:1:-1}
+    fi
+    printf -v "$key" '%s' "$val"
+    export "$key"
+  done <"$CONFIG_FILE"
+}
+
+load_config
+
+: "${GITHUB_ORG:=T21C}"
+: "${RUNNER_NAME:=pop-os-sentry-host}"
+: "${TAILSCALE_HOST:=pop-os}"
+: "${TAILSCALE_IP:=100.123.141.2}"
+: "${SELF_HOSTED_JSON:=[\"self-hosted\",\"linux\",\"tuf\"]}"
+: "${GITHUB_HOSTED_JSON:=[\"ubuntu-latest\"]}"
+: "${FAIL_STREAK_REQUIRED:=2}"
+: "${STATE_FILE:=/var/lib/tuf/ci-runner-failover.state}"
+: "${SCOPE:=org}" # org | repos
+: "${REPOS:=T21C/tuf-backend T21C/t21c-web-frontend T21C/tuf-infra}"
+
+log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "missing required command: $1" >&2
+    exit 66
+  }
+}
+
+need_cmd curl
+need_cmd jq
+
+if [[ -z ${GITHUB_TOKEN:-} ]]; then
+  echo "GITHUB_TOKEN is unset (set in $CONFIG_FILE)" >&2
+  exit 78
+fi
+
+api() {
+  local method=$1 path=$2
+  shift 2
+  curl -fsS \
+    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    -X "$method" \
+    "https://api.github.com${path}" \
+    "$@"
+}
+
+host_reachable() {
+  if command -v tailscale >/dev/null 2>&1; then
+    if tailscale ping -c 1 -timeout 3s "$TAILSCALE_HOST" >/dev/null 2>&1; then
+      return 0
+    fi
+    if tailscale ping -c 1 -timeout 3s "$TAILSCALE_IP" >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+  ping -c 1 -W 2 "$TAILSCALE_IP" >/dev/null 2>&1
+}
+
+runner_online() {
+  local json
+  if ! json=$(api GET "/orgs/${GITHUB_ORG}/actions/runners?per_page=100"); then
+    log "warn: could not list org runners; treating runner API as unavailable"
+    return 1
+  fi
+  jq -e --arg name "$RUNNER_NAME" '
+    .runners
+    | map(select(.name == $name))
+    | length > 0
+      and all(.[]; .status == "online")
+  ' >/dev/null <<<"$json"
+}
+
+desired_runs_on() {
+  if host_reachable && runner_online; then
+    printf '%s' "$SELF_HOSTED_JSON"
+  else
+    printf '%s' "$GITHUB_HOSTED_JSON"
+  fi
+}
+
+read_fail_streak() {
+  if [[ -f $STATE_FILE ]]; then
+    awk -F= '/^fail_streak=/ {print $2}' "$STATE_FILE" | tail -1
+  else
+    echo 0
+  fi
+}
+
+read_prev_desired() {
+  if [[ -f $STATE_FILE ]]; then
+    # desired is JSON; stored as desired_b64 to avoid parsing issues
+    local b64
+    b64=$(awk -F= '/^desired_b64=/ {print $2}' "$STATE_FILE" | tail -1)
+    if [[ -n $b64 ]]; then
+      printf '%s' "$b64" | base64 -d
+      return 0
+    fi
+  fi
+  printf '%s' "$SELF_HOSTED_JSON"
+}
+
+write_state() {
+  local desired=$1 streak=$2
+  mkdir -p "$(dirname "$STATE_FILE")"
+  cat >"$STATE_FILE" <<EOF
+desired_b64=$(printf '%s' "$desired" | base64 -w0)
+fail_streak=$streak
+updated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
+}
+
+get_org_var() {
+  api GET "/orgs/${GITHUB_ORG}/actions/variables/CI_RUNS_ON" 2>/dev/null \
+    | jq -r '.value // empty' || true
+}
+
+set_org_var() {
+  local value=$1
+  local current
+  current=$(get_org_var)
+  if [[ $current == "$value" ]]; then
+    log "org CI_RUNS_ON already $value"
+    return 0
+  fi
+  if [[ -n $current ]]; then
+    api PATCH "/orgs/${GITHUB_ORG}/actions/variables/CI_RUNS_ON" \
+      -H 'Content-Type: application/json' \
+      --data "$(jq -nc --arg v "$value" '{name:"CI_RUNS_ON",value:$v}')" >/dev/null
+  else
+    api POST "/orgs/${GITHUB_ORG}/actions/variables" \
+      -H 'Content-Type: application/json' \
+      --data "$(jq -nc --arg v "$value" '{name:"CI_RUNS_ON",value:$v,visibility:"all"}')" >/dev/null
+  fi
+  log "set org CI_RUNS_ON -> $value"
+}
+
+set_repo_var() {
+  local repo=$1 value=$2
+  local owner=${repo%/*} name=${repo#*/}
+  local current
+  current=$(api GET "/repos/${owner}/${name}/actions/variables/CI_RUNS_ON" 2>/dev/null \
+    | jq -r '.value // empty' || true)
+  if [[ $current == "$value" ]]; then
+    log "repo $repo CI_RUNS_ON already $value"
+    return 0
+  fi
+  if [[ -n $current ]]; then
+    api PATCH "/repos/${owner}/${name}/actions/variables/CI_RUNS_ON" \
+      -H 'Content-Type: application/json' \
+      --data "$(jq -nc --arg v "$value" '{name:"CI_RUNS_ON",value:$v}')" >/dev/null
+  else
+    api POST "/repos/${owner}/${name}/actions/variables" \
+      -H 'Content-Type: application/json' \
+      --data "$(jq -nc --arg v "$value" '{name:"CI_RUNS_ON",value:$v}')" >/dev/null
+  fi
+  log "set $repo CI_RUNS_ON -> $value"
+}
+
+apply_value() {
+  local value=$1
+  case "$SCOPE" in
+    org)
+      set_org_var "$value"
+      ;;
+    repos)
+      local repo
+      for repo in $REPOS; do
+        set_repo_var "$repo" "$value"
+      done
+      ;;
+    *)
+      echo "SCOPE must be org or repos (got: $SCOPE)" >&2
+      exit 64
+      ;;
+  esac
+}
+
+raw=$(desired_runs_on)
+streak=$(read_fail_streak)
+streak=${streak:-0}
+
+if [[ $raw == "$SELF_HOSTED_JSON" ]]; then
+  streak=0
+  desired=$SELF_HOSTED_JSON
+  log "health ok (host+runner); prefer self-hosted"
+else
+  streak=$((streak + 1))
+  if ((streak >= FAIL_STREAK_REQUIRED)); then
+    desired=$GITHUB_HOSTED_JSON
+    log "health fail streak=$streak (>= $FAIL_STREAK_REQUIRED); prefer github-hosted"
+  else
+    desired=$(read_prev_desired)
+    log "health fail streak=$streak (< $FAIL_STREAK_REQUIRED); holding previous"
+  fi
+fi
+
+write_state "$desired" "$streak"
+apply_value "$desired"

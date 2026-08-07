@@ -112,6 +112,27 @@ Google service-account JSON file. `tuf-init` installs it under
 `/srv/tuf/config/secrets` with read access limited to root and the runtime GID.
 Canary data is stored separately in `/srv/tuf-canary/data`.
 
+## CI runner failover (self-hosted ↔ ubuntu-latest)
+
+Workflows use `runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubuntu-latest"]') }}`.
+A timer on the production host probes the laptop over Tailscale and the GitHub
+org runner API, then sets org variable `CI_RUNS_ON` to either
+`["self-hosted","linux","tuf"]` or `["ubuntu-latest"]`.
+
+One-time on **tuf-main-server** (after this repo is synced):
+
+```sh
+sudo cp /srv/tuf/infra/config/ci-runner-failover.env.example \
+  /srv/tuf/config/ci-runner-failover.env
+sudo chmod 600 /srv/tuf/config/ci-runner-failover.env
+# edit GITHUB_TOKEN=… (org runners read + variables write)
+sudo systemctl enable --now tuf-ci-runner-failover.timer
+sudo systemctl start tuf-ci-runner-failover.service
+journalctl -u tuf-ci-runner-failover.service -n 50 --no-pager
+```
+
+`tuf-sync-infra` installs the unit/timer and `/usr/local/sbin/tuf-ci-runner-failover`.
+
 ## Nginx CSP
 
 The production CSP is stored in `nginx/tuf-csp.conf`. It permits the frontend to

@@ -74,6 +74,7 @@ install_sbin_wrapper tuf-recreate
 install_sbin_wrapper tuf-install-nginx-csp
 install_sbin_wrapper tuf-sync-infra
 install_sbin_wrapper tuf-prune-images
+install_sbin_wrapper tuf-ci-runner-failover
 
 if [[ -x $INFRA_BIN/tuf-deploy-canary ]]; then
   install_sbin_wrapper tuf-deploy-canary
@@ -91,6 +92,12 @@ fi
 /usr/bin/install -m 0644 -o root -g root "$INFRA_DIR/systemd/tuf-stack.service" /etc/systemd/system/tuf-stack.service
 if [[ -f $INFRA_DIR/systemd/tuf-canary.service ]]; then
   /usr/bin/install -m 0644 -o root -g root "$INFRA_DIR/systemd/tuf-canary.service" /etc/systemd/system/tuf-canary.service
+fi
+if [[ -f $INFRA_DIR/systemd/tuf-ci-runner-failover.service ]]; then
+  /usr/bin/install -m 0644 -o root -g root "$INFRA_DIR/systemd/tuf-ci-runner-failover.service" \
+    /etc/systemd/system/tuf-ci-runner-failover.service
+  /usr/bin/install -m 0644 -o root -g root "$INFRA_DIR/systemd/tuf-ci-runner-failover.timer" \
+    /etc/systemd/system/tuf-ci-runner-failover.timer
 fi
 /usr/bin/systemctl daemon-reload
 
