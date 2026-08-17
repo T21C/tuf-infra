@@ -4,7 +4,9 @@ set -Eeuo pipefail
 # Detach /srv/tuf/infra to an immutable git SHA and refresh host wiring.
 # Deploy entrypoints live in this checkout (/srv/tuf/infra/bin/*). Copies under
 # /usr/local/sbin are thin exec wrappers so PATH/systemd callers still work.
-# Does NOT touch /srv/tuf/config/*.env (unlike tuf-init).
+# Existing values in /srv/tuf/config/*.env are preserved. Schema additions with
+# safe defaults may be installed below so a new Compose service can be introduced
+# without making the immutable infra checkout impossible to validate.
 
 readonly INFRA_DIR=/srv/tuf/infra
 readonly INFRA_BIN=$INFRA_DIR/bin
@@ -52,6 +54,33 @@ if ! /usr/bin/git cat-file -t "$requested_sha" >/dev/null 2>&1; then
 fi
 
 /usr/bin/git checkout --detach --quiet "$requested_sha"
+
+upsert_default() {
+  local file=$1 key=$2 value=$3 temporary
+  [[ -f $file ]] || return 0
+  /usr/bin/grep -qE "^${key}=" "$file" && return 0
+  temporary=$(/usr/bin/mktemp "${file}.XXXXXX")
+  /usr/bin/cp --preserve=mode,ownership "$file" "$temporary"
+  /usr/bin/printf '%s=%s\n' "$key" "$value" >>"$temporary"
+  /usr/bin/mv -f "$temporary" "$file"
+}
+
+install_env_if_missing() {
+  local source=$1 destination=$2
+  [[ -f $destination ]] && return 0
+  /usr/bin/install -m 0600 -o root -g root "$source" "$destination"
+  echo "installed new config with safe defaults: $destination"
+}
+
+install_env_if_missing "$INFRA_DIR/config/thumbnail-worker.env.example" \
+  /srv/tuf/config/thumbnail-worker.env
+upsert_default /srv/tuf/config/api.env THUMBNAIL_RENDER_MODE local
+
+if [[ -d /srv/tuf/config/canary ]]; then
+  install_env_if_missing "$INFRA_DIR/config/canary/thumbnail-worker.env.example" \
+    /srv/tuf/config/canary/thumbnail-worker.env
+  upsert_default /srv/tuf/config/canary/api.env THUMBNAIL_RENDER_MODE local
+fi
 
 install_sbin_wrapper() {
   local name=$1

@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 readonly INFRA_DIR=/srv/tuf/infra
 readonly LOCK_FILE=/run/lock/tuf-deploy.lock
-readonly ALLOWED_SERVICES=(frontend api cdn cdc health)
+readonly ALLOWED_SERVICES=(frontend api cdn cdc health thumbnail-worker)
 
 usage() {
   echo "usage: tuf-recreate [--canary] <service> [service...]" >&2

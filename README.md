@@ -2,7 +2,7 @@
 
 Infrastructure configuration for The Universal Forums production environment.
 
-- `compose.yml`: Frontend, API, CDN, CDC, and Health containers
+- `compose.yml`: Frontend, API, Thumbnail Worker, CDN, CDC, and Health containers
 - `compose.canary.yml`: Isolated canary project; CDC is opt-in
 - `systemd/`: Unit for managing the Compose stack with the server lifecycle
 - `bin/`: Frontend and backend image deployment scripts
@@ -25,6 +25,7 @@ Frontend and backend images are stored in GHCR. The server pulls and runs these 
 │   ├── cdn.env
 │   ├── cdc.env
 │   ├── health.env
+│   ├── thumbnail-worker.env
 │   ├── canary/
 │   │   ├── stack.env
 │   │   └── ...
@@ -38,6 +39,30 @@ Frontend and backend images are stored in GHCR. The server pulls and runs these 
 │   └── mapping-hashes/
 └── infra/                 # checkout of this repository
 ```
+
+`tuf-sync-infra` installs `thumbnail-worker.env` from its non-secret defaults when
+the file is first introduced and adds `THUMBNAIL_RENDER_MODE=local` to an existing
+API config. Switch the production API to `queue` only after the worker healthcheck
+passes.
+
+## Thumbnail worker rollout
+
+Deploy a dual-mode backend image first while production still has
+`THUMBNAIL_RENDER_MODE=local`. After this infra revision is synced, start and test
+the worker without moving HTTP traffic to it:
+
+```sh
+sudo tuf-recreate thumbnail-worker
+curl --fail http://127.0.0.1:3891/health
+sudo docker compose --env-file /srv/tuf/config/stack.env \
+  -f /srv/tuf/infra/compose.yml run --rm --no-deps thumbnail-worker \
+  node dist/externalServices/thumbnailWorker/smoke.js
+```
+
+Only after both checks pass, set `THUMBNAIL_RENDER_MODE=queue` in
+`/srv/tuf/config/api.env` and run `sudo tuf-recreate api`. Roll back without
+stopping the worker by restoring `THUMBNAIL_RENDER_MODE=local` and recreating only
+the API. HTTP render timeouts do not remove queued jobs or their spool inputs.
 
 Environment values and credentials belong only in `/srv/tuf/config` and must not be committed to Git.
 

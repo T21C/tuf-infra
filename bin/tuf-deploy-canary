@@ -14,7 +14,7 @@ fi
 readonly component=$1 requested_tag=$2
 if [[ $component == backend ]]; then
   readonly tag_key=TUF_BACKEND_IMAGE_TAG
-  readonly services=(api cdn health)
+  readonly services=(api cdn health thumbnail-worker)
 else
   readonly tag_key=TUF_FRONTEND_IMAGE_TAG
   readonly services=(frontend)

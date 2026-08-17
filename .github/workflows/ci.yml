@@ -35,6 +35,7 @@ jobs:
           bin/tuf-install-nginx-csp
           bin/tuf-init
           bin/tuf-init-canary
+          bin/tuf-normalize-runtime-paths
           bin/tuf-seed-production-mapping-hashes
 
       - name: Prepare Compose validation config
