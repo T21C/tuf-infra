@@ -67,6 +67,7 @@ services:
       # Cap V8 so Chromium/sharp/native buffers retain cgroup headroom (exit 137 = cgroup OOM).
       NODE_OPTIONS: --max-old-space-size=1280
     env_file:
+      # DB_USER here is the API / migrate / backup role (schema ALL, not MySQL root).
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/redis.env
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/storage.env
@@ -133,6 +134,7 @@ services:
     env_file:
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/storage.env
+      # cdn.env DB_USER/DB_PASSWORD override common.env (DML-only MySQL role).
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/cdn.env
     volumes:
       - ${TUF_DATA_ROOT:-/srv/tuf/data}/cdn-temp:/srv/tuf/data/cdn-temp
@@ -153,6 +155,7 @@ services:
     command: ["node", "dist/externalServices/cdcService/app.js"]
     env_file:
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
+      # CDC_DB_USER in cdc.env is the binlog reader; must not be DB_USER.
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/redis.env
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/cdc.env
     volumes:
@@ -172,6 +175,7 @@ services:
     command: ["node", "dist/externalServices/healthService/startHealthService.js"]
     env_file:
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
+      # health.env DB_USER/DB_PASSWORD override common.env (probe + latency samples).
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/health.env
     volumes:
       - ${TUF_DATA_ROOT:-/srv/tuf/data}/logs:/srv/tuf/data/logs
@@ -192,7 +196,7 @@ services:
 
   # One-shot schema migration, not part of the running stack. The profile keeps it out
   # of `compose up`; tuf-deploy-backend invokes it with `compose run --rm` after the new
-  # image is pulled and before services are recreated.
+  # image is pulled and before services are recreated. Uses common.env DB_USER (schema ALL).
   migrate:
     <<: *backend-service
     profiles: ["tools"]

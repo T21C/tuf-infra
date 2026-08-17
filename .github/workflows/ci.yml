@@ -35,6 +35,8 @@ jobs:
           bin/tuf-install-nginx-csp
           bin/tuf-init
           bin/tuf-init-canary
+          bin/tuf-init-canary-database
+          bin/tuf-provision-mysql-users
           bin/tuf-normalize-runtime-paths
           bin/tuf-seed-production-mapping-hashes
 

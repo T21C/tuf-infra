@@ -101,6 +101,7 @@ EOF
 }
 
 install_sbin_wrapper tuf-config-check
+install_sbin_wrapper tuf-provision-mysql-users
 install_sbin_wrapper tuf-deploy-backend
 install_sbin_wrapper tuf-deploy-frontend
 install_sbin_wrapper tuf-recreate

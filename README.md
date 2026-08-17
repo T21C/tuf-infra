@@ -66,6 +66,25 @@ the API. HTTP render timeouts do not remove queued jobs or their spool inputs.
 
 Environment values and credentials belong only in `/srv/tuf/config` and must not be committed to Git.
 
+## MySQL roles
+
+Containers use `network_mode: host` and connect to `127.0.0.1`. Do not use MySQL `root` as `DB_USER`. Four accounts, provisioned by `bin/tuf-provision-mysql-users`:
+
+| Role | Config | Privileges |
+| --- | --- | --- |
+| API, migrate, backups | `common.env` `DB_USER` | `ALL` on `DB_DATABASE` and `DB_LOGGING_DATABASE` |
+| CDN | `cdn.env` `DB_USER` (overrides common) | DML on those schemas |
+| Health | `health.env` `DB_USER` (overrides common) | DML on `DB_DATABASE` (probes + latency samples) |
+| CDC | `cdc.env` `CDC_DB_USER` | `REPLICATION SLAVE`/`CLIENT` + `SELECT` on `DB_DATABASE` |
+
+`root@localhost` is socket-only (`sudo mysql`). After filling the four passwords, run:
+
+```sh
+sudo /srv/tuf/infra/bin/tuf-provision-mysql-users
+```
+
+then recreate the stack so containers reload env files.
+
 ## Keeping host infra in sync
 
 Deploy entrypoints live in the host checkout at `/srv/tuf/infra/bin/*`.

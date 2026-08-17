@@ -12,15 +12,19 @@ value_of() {
   /usr/bin/printf '%s' "${line#*=}"
 }
 
-readonly production_common=/srv/tuf/config/common.env
+readonly production_dir=/srv/tuf/config
+readonly production_common=$production_dir/common.env
 readonly canary_common=/srv/tuf/config/canary/common.env
 readonly production_database=$(value_of "$production_common" DB_DATABASE)
 readonly canary_database=$(value_of "$canary_common" DB_DATABASE)
-readonly database_user=$(value_of "$production_common" DB_USER)
+readonly app_user=$(value_of "$production_common" DB_USER)
+readonly cdn_user=$(value_of "$production_dir/cdn.env" DB_USER)
+readonly health_user=$(value_of "$production_dir/health.env" DB_USER)
+readonly cdc_user=$(value_of "$production_dir/cdc.env" CDC_DB_USER)
 
-for value in "$production_database" "$canary_database" "$database_user"; do
+for value in "$production_database" "$canary_database" "$app_user" "$cdn_user" "$health_user" "$cdc_user"; do
   [[ $value =~ ^[A-Za-z0-9_]+$ ]] || {
-    echo "database names and user must contain only letters, digits, or underscores" >&2
+    echo "database names and users must contain only letters, digits, or underscores" >&2
     exit 65
   }
 done
@@ -43,12 +47,25 @@ else
   echo "$canary_database already has $table_count table(s); schema clone skipped"
 fi
 
-grant_statements=$(/usr/bin/mysql --batch --skip-column-names -e \
-  "SELECT CONCAT('GRANT ALL PRIVILEGES ON \`$canary_database\`.* TO ', QUOTE(User), '@', QUOTE(Host), ';') FROM mysql.user WHERE User = '$database_user'")
-[[ -n $grant_statements ]] || {
-  echo "MySQL account not found for DB_USER=$database_user" >&2
-  exit 66
+grant_on_canary() {
+  local user=$1 privileges=$2 host host_count
+  host_count=$(/usr/bin/mysql --batch --skip-column-names -e \
+    "SELECT COUNT(*) FROM mysql.user WHERE User = '$user'")
+  [[ $host_count != 0 ]] || {
+    echo "MySQL account not found for $user" >&2
+    exit 66
+  }
+  while IFS= read -r host; do
+    [[ -n $host ]] || continue
+    /usr/bin/mysql --batch -e \
+      "GRANT $privileges ON \`${canary_database}\`.* TO '${user}'@'${host}'"
+  done < <(/usr/bin/mysql --batch --skip-column-names -e \
+    "SELECT Host FROM mysql.user WHERE User = '$user'")
 }
-/usr/bin/printf '%s\n' "$grant_statements" | /usr/bin/mysql
+
+grant_on_canary "$app_user" "ALL PRIVILEGES"
+grant_on_canary "$cdn_user" "SELECT, INSERT, UPDATE, DELETE, EXECUTE, SHOW VIEW, CREATE TEMPORARY TABLES, LOCK TABLES"
+grant_on_canary "$health_user" "SELECT, INSERT, UPDATE, DELETE"
+grant_on_canary "$cdc_user" "SELECT"
 
 echo "canary database initialized: $canary_database"

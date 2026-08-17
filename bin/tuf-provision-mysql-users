@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Create least-privilege MySQL accounts for TUF host services and return root
+# to socket-only auth. Reads credentials from /srv/tuf/config (override with
+# TUF_CONFIG_DIR). Does not print passwords.
+
+if [[ $EUID -ne 0 ]]; then
+  echo "run this command as root" >&2
+  exit 77
+fi
+
+readonly config_dir=${TUF_CONFIG_DIR:-/srv/tuf/config}
+
+value_of() {
+  local file=$1 key=$2 line
+  line=$(/usr/bin/grep -m1 -E "^${key}=" "$file" || true)
+  /usr/bin/printf '%s' "${line#*=}"
+}
+
+require_ident() {
+  local label=$1 value=$2
+  [[ $value =~ ^[A-Za-z0-9_]+$ ]] || {
+    echo "$label must contain only letters, digits, or underscores (got '$value')" >&2
+    exit 65
+  }
+}
+
+require_password() {
+  local label=$1 value=$2
+  [[ -n $value && $value != __REQUIRED__ ]] || {
+    echo "$label is missing" >&2
+    exit 65
+  }
+}
+
+sql_quote() {
+  local value=$1
+  value=${value//\\/\\\\}
+  value=${value//\'/\'\'}
+  /usr/bin/printf "'%s'" "$value"
+}
+
+sql_ident() {
+  /usr/bin/printf '`%s`' "$1"
+}
+
+run_sql() {
+  /usr/bin/mysql --batch --raw
+}
+
+readonly common=$config_dir/common.env
+readonly cdn=$config_dir/cdn.env
+readonly health=$config_dir/health.env
+readonly cdc=$config_dir/cdc.env
+
+for file in "$common" "$cdn" "$health" "$cdc"; do
+  [[ -f $file ]] || {
+    echo "missing $file" >&2
+    exit 66
+  }
+done
+
+app_db=$(value_of "$common" DB_DATABASE)
+logging_db=$(value_of "$common" DB_LOGGING_DATABASE)
+app_user=$(value_of "$common" DB_USER)
+app_password=$(value_of "$common" DB_PASSWORD)
+cdn_user=$(value_of "$cdn" DB_USER)
+cdn_password=$(value_of "$cdn" DB_PASSWORD)
+health_user=$(value_of "$health" DB_USER)
+health_password=$(value_of "$health" DB_PASSWORD)
+cdc_user=$(value_of "$cdc" CDC_DB_USER)
+cdc_password=$(value_of "$cdc" CDC_DB_PASSWORD)
+
+[[ -n $logging_db ]] || logging_db=tuf_logging
+
+require_ident DB_DATABASE "$app_db"
+require_ident DB_LOGGING_DATABASE "$logging_db"
+require_ident "common.env DB_USER" "$app_user"
+require_ident "cdn.env DB_USER" "$cdn_user"
+require_ident "health.env DB_USER" "$health_user"
+require_ident CDC_DB_USER "$cdc_user"
+require_password "common.env DB_PASSWORD" "$app_password"
+require_password "cdn.env DB_PASSWORD" "$cdn_password"
+require_password "health.env DB_PASSWORD" "$health_password"
+require_password CDC_DB_PASSWORD "$cdc_password"
+
+for user in "$app_user" "$cdn_user" "$health_user" "$cdc_user"; do
+  [[ $user != root ]] || {
+    echo "service users must not be root (found DB user '$user')" >&2
+    exit 65
+  }
+done
+
+declare -A seen=()
+for user in "$app_user" "$cdn_user" "$health_user" "$cdc_user"; do
+  [[ -z ${seen[$user]+x} ]] || {
+    echo "MySQL service users must be distinct (duplicate '$user')" >&2
+    exit 65
+  }
+  seen[$user]=1
+done
+
+readonly dml='SELECT, INSERT, UPDATE, DELETE, EXECUTE, SHOW VIEW, CREATE TEMPORARY TABLES, LOCK TABLES'
+readonly app_db_ident=$(sql_ident "$app_db")
+readonly logging_db_ident=$(sql_ident "$logging_db")
+
+run_sql <<SQL
+CREATE DATABASE IF NOT EXISTS $app_db_ident CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS $logging_db_ident CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+CREATE USER IF NOT EXISTS '$app_user'@'127.0.0.1' IDENTIFIED BY $(sql_quote "$app_password");
+ALTER USER '$app_user'@'127.0.0.1' IDENTIFIED BY $(sql_quote "$app_password");
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM '$app_user'@'127.0.0.1';
+GRANT ALL PRIVILEGES ON $app_db_ident.* TO '$app_user'@'127.0.0.1';
+GRANT ALL PRIVILEGES ON $logging_db_ident.* TO '$app_user'@'127.0.0.1';
+
+CREATE USER IF NOT EXISTS '$cdn_user'@'127.0.0.1' IDENTIFIED BY $(sql_quote "$cdn_password");
+ALTER USER '$cdn_user'@'127.0.0.1' IDENTIFIED BY $(sql_quote "$cdn_password");
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM '$cdn_user'@'127.0.0.1';
+GRANT $dml ON $app_db_ident.* TO '$cdn_user'@'127.0.0.1';
+GRANT $dml ON $logging_db_ident.* TO '$cdn_user'@'127.0.0.1';
+
+CREATE USER IF NOT EXISTS '$health_user'@'127.0.0.1' IDENTIFIED BY $(sql_quote "$health_password");
+ALTER USER '$health_user'@'127.0.0.1' IDENTIFIED BY $(sql_quote "$health_password");
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM '$health_user'@'127.0.0.1';
+GRANT SELECT, INSERT, UPDATE, DELETE ON $app_db_ident.* TO '$health_user'@'127.0.0.1';
+
+CREATE USER IF NOT EXISTS '$cdc_user'@'127.0.0.1' IDENTIFIED BY $(sql_quote "$cdc_password");
+ALTER USER '$cdc_user'@'127.0.0.1' IDENTIFIED BY $(sql_quote "$cdc_password");
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM '$cdc_user'@'127.0.0.1';
+GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO '$cdc_user'@'127.0.0.1';
+GRANT SELECT ON $app_db_ident.* TO '$cdc_user'@'127.0.0.1';
+
+DROP USER IF EXISTS 'root'@'127.0.0.1';
+DROP USER IF EXISTS 'root'@'::1';
+DROP USER IF EXISTS 'root'@'%';
+ALTER USER 'root'@'localhost' IDENTIFIED WITH auth_socket;
+
+FLUSH PRIVILEGES;
+SQL
+
+echo "MySQL roles provisioned:"
+echo "  app/migrate/backup: $app_user@127.0.0.1 → $app_db, $logging_db (ALL on schemas)"
+echo "  cdn:                $cdn_user@127.0.0.1 → DML on $app_db, $logging_db"
+echo "  health:             $health_user@127.0.0.1 → DML on $app_db"
+echo "  cdc:                $cdc_user@127.0.0.1 → replication + SELECT on $app_db"
+echo "  root@localhost:     auth_socket (sudo mysql)"
+echo "recreate API/CDN/CDC/health so they pick up the new credentials"
