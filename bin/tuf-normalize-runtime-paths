@@ -39,6 +39,8 @@ normalize_stack() {
   upsert "$config_dir/api.env" ELASTICSEARCH_CA_PATH /run/secrets/elasticsearch-ca.crt
   upsert "$config_dir/api.env" TRANSLATIONS_PATH ""
   upsert "$config_dir/api.env" ELASTICSEARCH_INDEX_PREFIX "$index_prefix"
+  upsert "$config_dir/thumbnail-worker.env" THUMBNAIL_JOB_INPUT_PATH /srv/tuf/data/cache/thumbnail-render-inputs
+  upsert "$config_dir/thumbnail-worker.env" THUMBNAILS_CACHE_PATH /srv/tuf/data/thumbnails
   upsert "$config_dir/storage.env" PACK_CDN_ROOT "$data_root/cdn-temp/packs"
 }
 

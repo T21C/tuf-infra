@@ -11,7 +11,7 @@ readonly repo_dir
 readonly source_dir=$repo_dir/config/canary
 readonly production_dir=/srv/tuf/config
 readonly target_dir=/srv/tuf/config/canary
-readonly names=(common redis storage api cdn cdc health)
+readonly names=(common redis storage api cdn cdc health thumbnail-worker)
 
 [[ -f $source_dir/stack.env ]] || {
   echo "copy config/canary/stack.env.example to config/canary/stack.env and fill it first" >&2

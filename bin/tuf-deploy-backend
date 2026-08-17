@@ -5,6 +5,8 @@ readonly INFRA_DIR=/srv/tuf/infra
 readonly STACK_ENV=/srv/tuf/config/stack.env
 readonly LOCK_FILE=/run/lock/tuf-deploy.lock
 readonly COMPOSE=(/usr/bin/docker compose --env-file "$STACK_ENV" -f "$INFRA_DIR/compose.yml")
+readonly CORE_SERVICES=(api cdn cdc health)
+readonly BACKEND_SERVICES=(api cdn cdc health thumbnail-worker)
 
 if [[ $# -ne 1 || ! $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]{6,127}$ ]]; then
   echo "usage: tuf-deploy-backend <immutable-image-tag>" >&2
@@ -42,12 +44,17 @@ set_tag() {
 rollback() {
   echo "deployment failed; rolling back to $previous_tag" >&2
   set_tag "$previous_tag"
-  "${COMPOSE[@]}" pull api cdn cdc health || true
-  "${COMPOSE[@]}" up -d --remove-orphans --wait api cdn cdc health || true
+  "${COMPOSE[@]}" pull "${CORE_SERVICES[@]}" || true
+  "${COMPOSE[@]}" up -d --remove-orphans --wait "${CORE_SERVICES[@]}" || true
+  # The image before the first worker release has no worker entrypoint. Core API
+  # rollback must still complete even if that older image cannot start the worker.
+  if ! "${COMPOSE[@]}" up -d --no-deps --wait thumbnail-worker; then
+    "${COMPOSE[@]}" stop thumbnail-worker || true
+  fi
 }
 
 set_tag "$requested_tag"
-if ! "${COMPOSE[@]}" pull api cdn cdc health; then
+if ! "${COMPOSE[@]}" pull "${BACKEND_SERVICES[@]}"; then
   rollback
   exit 1
 fi
@@ -61,10 +68,9 @@ if ! "${COMPOSE[@]}" run --rm --no-deps migrate; then
   exit 1
 fi
 
-if ! "${COMPOSE[@]}" up -d --remove-orphans --wait api cdn cdc health; then
+if ! "${COMPOSE[@]}" up -d --remove-orphans --wait "${BACKEND_SERVICES[@]}"; then
   rollback
   exit 1
 fi
 
 echo "backend deployed: $requested_tag"
-

@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 readonly production_dir=/srv/tuf/config
 readonly canary_dir=/srv/tuf/config/canary
-readonly names=(stack common redis storage api cdn cdc health)
+readonly names=(stack common redis storage api cdn cdc health thumbnail-worker)
 
 errors=0
 
@@ -51,6 +51,9 @@ compare_different "$production_dir/api.env" "$canary_dir/api.env" PROD_PORT
 compare_different "$production_dir/cdn.env" "$canary_dir/cdn.env" CDN_PORT
 compare_different "$production_dir/cdc.env" "$canary_dir/cdc.env" CDC_HEALTH_PORT
 compare_different "$production_dir/health.env" "$canary_dir/health.env" HEALTH_PORT
+compare_different "$production_dir/thumbnail-worker.env" "$canary_dir/thumbnail-worker.env" THUMBNAIL_WORKER_PORT
+compare_different "$production_dir/thumbnail-worker.env" "$canary_dir/thumbnail-worker.env" THUMBNAIL_QUEUE_NAME
+compare_different "$production_dir/thumbnail-worker.env" "$canary_dir/thumbnail-worker.env" THUMBNAIL_QUEUE_PREFIX
 compare_different "$production_dir/stack.env" "$canary_dir/stack.env" TUF_COMPOSE_PROJECT_NAME
 compare_different "$production_dir/stack.env" "$canary_dir/stack.env" TUF_DATA_ROOT
 compare_different "$production_dir/stack.env" "$canary_dir/stack.env" TUF_FRONTEND_HOST_PORT
@@ -78,12 +81,45 @@ require_value "$canary_dir/storage.env" PACK_CDN_ROOT /srv/tuf/data/cdn-temp/pac
 require_value "$canary_dir/health.env" LOG_PATH /tmp/tuf-health-logs
 require_value "$canary_dir/health.env" HEALTH_MAIN_SERVER_URL http://127.0.0.1:13000/v2/health
 require_value "$canary_dir/health.env" HEALTH_CDN_URL http://127.0.0.1:13001/health
+require_value "$canary_dir/thumbnail-worker.env" THUMBNAIL_WORKER_BIND_ADDRESS 127.0.0.1
+require_value "$canary_dir/thumbnail-worker.env" THUMBNAIL_WORKER_PORT 13891
+require_value "$canary_dir/thumbnail-worker.env" THUMBNAIL_WORKER_CONCURRENCY 1
+require_value "$canary_dir/thumbnail-worker.env" THUMBNAIL_JOB_INPUT_PATH /srv/tuf/data/cache/thumbnail-render-inputs
+require_value "$canary_dir/thumbnail-worker.env" THUMBNAILS_CACHE_PATH /srv/tuf/data/thumbnails
+
+canary_render_mode=$(value_of "$canary_dir/api.env" THUMBNAIL_RENDER_MODE)
+[[ $canary_render_mode == local || $canary_render_mode == queue ]] || \
+  fail "THUMBNAIL_RENDER_MODE in canary api.env must be local or queue"
+canary_queue_name=$(value_of "$canary_dir/thumbnail-worker.env" THUMBNAIL_QUEUE_NAME)
+canary_queue_prefix=$(value_of "$canary_dir/thumbnail-worker.env" THUMBNAIL_QUEUE_PREFIX)
+[[ $canary_queue_name =~ ^[A-Za-z0-9_-]+$ ]] || \
+  fail "THUMBNAIL_QUEUE_NAME in canary thumbnail-worker.env contains invalid characters"
+[[ $canary_queue_prefix =~ ^[A-Za-z0-9_-]+$ ]] || \
+  fail "THUMBNAIL_QUEUE_PREFIX in canary thumbnail-worker.env contains invalid characters"
+for numeric_key in \
+  THUMBNAIL_WORKER_PORT \
+  THUMBNAIL_JOB_ATTEMPTS \
+  THUMBNAIL_JOB_MAX_HTML_BYTES \
+  THUMBNAIL_JOB_MAX_DIMENSION \
+  THUMBNAIL_QUEUE_MAX_WAITING \
+  THUMBNAIL_REQUEST_WAIT_MS \
+  THUMBNAIL_OG_REQUEST_WAIT_MS \
+  THUMBNAIL_OUTPUT_POLL_MS; do
+  numeric_value=$(value_of "$canary_dir/thumbnail-worker.env" "$numeric_key")
+  [[ $numeric_value =~ ^[1-9][0-9]*$ ]] || fail "$numeric_key in canary thumbnail-worker.env must be a positive integer"
+done
+
+canary_worker_port=$(value_of "$canary_dir/thumbnail-worker.env" THUMBNAIL_WORKER_PORT)
+if [[ $canary_worker_port =~ ^[1-9][0-9]*$ ]] && (( canary_worker_port > 65535 )); then
+  fail "THUMBNAIL_WORKER_PORT in canary thumbnail-worker.env must be at most 65535"
+fi
 
 for file_and_key in \
   "$canary_dir/api.env:BIND_ADDRESS" \
   "$canary_dir/cdn.env:CDN_BIND_ADDRESS" \
   "$canary_dir/cdc.env:CDC_BIND_ADDRESS" \
-  "$canary_dir/health.env:HEALTH_BIND_ADDRESS"; do
+  "$canary_dir/health.env:HEALTH_BIND_ADDRESS" \
+  "$canary_dir/thumbnail-worker.env:THUMBNAIL_WORKER_BIND_ADDRESS"; do
   file=${file_and_key%%:*}
   key=${file_and_key##*:}
   [[ $(value_of "$file" "$key") == 127.0.0.1 ]] || fail "$key must be 127.0.0.1 in canary"

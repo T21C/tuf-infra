@@ -3,13 +3,19 @@ set -Eeuo pipefail
 
 readonly config_dir=${TUF_CONFIG_DIR:-/srv/tuf/config}
 readonly example_dir=${TUF_CONFIG_EXAMPLE_DIR:-/srv/tuf/infra/config}
-readonly config_names=(stack common redis storage api cdn cdc health)
+readonly config_names=(stack common redis storage api cdn cdc health thumbnail-worker)
 
 errors=0
 
 fail() {
   echo "error: $*" >&2
   errors=$((errors + 1))
+}
+
+value_of() {
+  local file=$1 key=$2 line
+  line=$(/usr/bin/grep -m1 -E "^${key}=" "$file" || true)
+  /usr/bin/printf '%s' "${line#*=}"
 }
 
 for name in "${config_names[@]}"; do
@@ -54,6 +60,44 @@ for name in "${config_names[@]}"; do
     fail "$actual must not be world-readable (current mode: $permissions)"
   fi
 done
+
+render_mode=$(value_of "$config_dir/api.env" THUMBNAIL_RENDER_MODE)
+[[ $render_mode == local || $render_mode == queue ]] || \
+  fail "THUMBNAIL_RENDER_MODE in $config_dir/api.env must be local or queue"
+
+worker_env=$config_dir/thumbnail-worker.env
+queue_name=$(value_of "$worker_env" THUMBNAIL_QUEUE_NAME)
+queue_prefix=$(value_of "$worker_env" THUMBNAIL_QUEUE_PREFIX)
+[[ $queue_name =~ ^[A-Za-z0-9_-]+$ ]] || \
+  fail "THUMBNAIL_QUEUE_NAME must contain only letters, numbers, underscores, or hyphens"
+[[ $queue_prefix =~ ^[A-Za-z0-9_-]+$ ]] || \
+  fail "THUMBNAIL_QUEUE_PREFIX must contain only letters, numbers, underscores, or hyphens"
+[[ $(value_of "$worker_env" THUMBNAIL_WORKER_BIND_ADDRESS) == 127.0.0.1 ]] || \
+  fail "THUMBNAIL_WORKER_BIND_ADDRESS must be 127.0.0.1"
+[[ $(value_of "$worker_env" THUMBNAIL_WORKER_CONCURRENCY) == 1 ]] || \
+  fail "THUMBNAIL_WORKER_CONCURRENCY must be 1 on this host"
+[[ $(value_of "$worker_env" THUMBNAIL_JOB_INPUT_PATH) == /srv/tuf/data/cache/thumbnail-render-inputs ]] || \
+  fail "THUMBNAIL_JOB_INPUT_PATH must use the shared cache mount"
+[[ $(value_of "$worker_env" THUMBNAILS_CACHE_PATH) == /srv/tuf/data/thumbnails ]] || \
+  fail "THUMBNAILS_CACHE_PATH in thumbnail-worker.env must use the shared thumbnails mount"
+
+for numeric_key in \
+  THUMBNAIL_WORKER_PORT \
+  THUMBNAIL_JOB_ATTEMPTS \
+  THUMBNAIL_JOB_MAX_HTML_BYTES \
+  THUMBNAIL_JOB_MAX_DIMENSION \
+  THUMBNAIL_QUEUE_MAX_WAITING \
+  THUMBNAIL_REQUEST_WAIT_MS \
+  THUMBNAIL_OG_REQUEST_WAIT_MS \
+  THUMBNAIL_OUTPUT_POLL_MS; do
+  numeric_value=$(value_of "$worker_env" "$numeric_key")
+  [[ $numeric_value =~ ^[1-9][0-9]*$ ]] || fail "$numeric_key must be a positive integer"
+done
+
+worker_port=$(value_of "$worker_env" THUMBNAIL_WORKER_PORT)
+if [[ $worker_port =~ ^[1-9][0-9]*$ ]] && (( worker_port > 65535 )); then
+  fail "THUMBNAIL_WORKER_PORT must be at most 65535"
+fi
 
 for required_path in \
   /srv/tuf/data/cache \

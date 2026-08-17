@@ -71,6 +71,7 @@ services:
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/redis.env
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/storage.env
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/api.env
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/thumbnail-worker.env
     volumes:
       - ${TUF_DATA_ROOT:-/srv/tuf/data}/cache:/srv/tuf/data/cache
       - ${TUF_DATA_ROOT:-/srv/tuf/data}/thumbnails:/srv/tuf/data/thumbnails
@@ -96,6 +97,28 @@ services:
     mem_limit: 2560m
     memswap_limit: 3328m
     pids_limit: 512
+
+  thumbnail-worker:
+    <<: *backend-service
+    command: ["node", "dist/externalServices/thumbnailWorker/app.js"]
+    env_file:
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/redis.env
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/thumbnail-worker.env
+    volumes:
+      - ${TUF_DATA_ROOT:-/srv/tuf/data}/cache:/srv/tuf/data/cache
+      - ${TUF_DATA_ROOT:-/srv/tuf/data}/thumbnails:/srv/tuf/data/thumbnails
+      - ${TUF_DATA_ROOT:-/srv/tuf/data}/logs:/srv/tuf/data/logs
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.THUMBNAIL_WORKER_PORT||3891)+'/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 45s
+    cpus: 0.75
+    mem_limit: 768m
+    memswap_limit: 1024m
+    pids_limit: 128
 
   cdn:
     <<: *backend-service
