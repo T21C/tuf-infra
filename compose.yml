@@ -67,8 +67,9 @@ services:
       # Cap V8 so Chromium/sharp/native buffers retain cgroup headroom (exit 137 = cgroup OOM).
       NODE_OPTIONS: --max-old-space-size=1280
     env_file:
-      # DB_USER here is the API / migrate / backup role (schema ALL, not MySQL root).
+      # DB_USER is API/migrate (schema ALL). backup.env is dump/restore only.
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/backup.env
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/redis.env
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/storage.env
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/api.env

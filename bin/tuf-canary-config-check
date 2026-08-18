@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 readonly production_dir=/srv/tuf/config
 readonly canary_dir=/srv/tuf/config/canary
-readonly names=(stack common redis storage api cdn cdc health thumbnail-worker)
+readonly names=(stack common backup redis storage api cdn cdc health thumbnail-worker)
 
 errors=0
 

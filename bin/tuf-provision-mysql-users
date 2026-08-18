@@ -50,11 +50,12 @@ run_sql() {
 }
 
 readonly common=$config_dir/common.env
+readonly backup=$config_dir/backup.env
 readonly cdn=$config_dir/cdn.env
 readonly health=$config_dir/health.env
 readonly cdc=$config_dir/cdc.env
 
-for file in "$common" "$cdn" "$health" "$cdc"; do
+for file in "$common" "$backup" "$cdn" "$health" "$cdc"; do
   [[ -f $file ]] || {
     echo "missing $file" >&2
     exit 66
@@ -65,6 +66,8 @@ app_db=$(value_of "$common" DB_DATABASE)
 logging_db=$(value_of "$common" DB_LOGGING_DATABASE)
 app_user=$(value_of "$common" DB_USER)
 app_password=$(value_of "$common" DB_PASSWORD)
+backup_user=$(value_of "$backup" BACKUP_DB_USER)
+backup_password=$(value_of "$backup" BACKUP_DB_PASSWORD)
 cdn_user=$(value_of "$cdn" DB_USER)
 cdn_password=$(value_of "$cdn" DB_PASSWORD)
 health_user=$(value_of "$health" DB_USER)
@@ -77,15 +80,17 @@ cdc_password=$(value_of "$cdc" CDC_DB_PASSWORD)
 require_ident DB_DATABASE "$app_db"
 require_ident DB_LOGGING_DATABASE "$logging_db"
 require_ident "common.env DB_USER" "$app_user"
+require_ident "backup.env BACKUP_DB_USER" "$backup_user"
 require_ident "cdn.env DB_USER" "$cdn_user"
 require_ident "health.env DB_USER" "$health_user"
 require_ident CDC_DB_USER "$cdc_user"
 require_password "common.env DB_PASSWORD" "$app_password"
+require_password "backup.env BACKUP_DB_PASSWORD" "$backup_password"
 require_password "cdn.env DB_PASSWORD" "$cdn_password"
 require_password "health.env DB_PASSWORD" "$health_password"
 require_password CDC_DB_PASSWORD "$cdc_password"
 
-for user in "$app_user" "$cdn_user" "$health_user" "$cdc_user"; do
+for user in "$app_user" "$backup_user" "$cdn_user" "$health_user" "$cdc_user"; do
   [[ $user != root ]] || {
     echo "service users must not be root (found DB user '$user')" >&2
     exit 65
@@ -93,7 +98,7 @@ for user in "$app_user" "$cdn_user" "$health_user" "$cdc_user"; do
 done
 
 declare -A seen=()
-for user in "$app_user" "$cdn_user" "$health_user" "$cdc_user"; do
+for user in "$app_user" "$backup_user" "$cdn_user" "$health_user" "$cdc_user"; do
   [[ -z ${seen[$user]+x} ]] || {
     echo "MySQL service users must be distinct (duplicate '$user')" >&2
     exit 65
@@ -115,6 +120,13 @@ ALTER USER '$app_user'@'127.0.0.1' IDENTIFIED BY $(sql_quote "$app_password");
 REVOKE ALL PRIVILEGES, GRANT OPTION FROM '$app_user'@'127.0.0.1';
 GRANT ALL PRIVILEGES ON $app_db_ident.* TO '$app_user'@'127.0.0.1';
 GRANT ALL PRIVILEGES ON $logging_db_ident.* TO '$app_user'@'127.0.0.1';
+
+CREATE USER IF NOT EXISTS '$backup_user'@'127.0.0.1' IDENTIFIED BY $(sql_quote "$backup_password");
+ALTER USER '$backup_user'@'127.0.0.1' IDENTIFIED BY $(sql_quote "$backup_password");
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM '$backup_user'@'127.0.0.1';
+GRANT ALL PRIVILEGES ON $app_db_ident.* TO '$backup_user'@'127.0.0.1';
+GRANT ALL PRIVILEGES ON $logging_db_ident.* TO '$backup_user'@'127.0.0.1';
+GRANT SET_USER_ID, SYSTEM_USER ON *.* TO '$backup_user'@'127.0.0.1';
 
 CREATE USER IF NOT EXISTS '$cdn_user'@'127.0.0.1' IDENTIFIED BY $(sql_quote "$cdn_password");
 ALTER USER '$cdn_user'@'127.0.0.1' IDENTIFIED BY $(sql_quote "$cdn_password");
@@ -142,9 +154,10 @@ FLUSH PRIVILEGES;
 SQL
 
 echo "MySQL roles provisioned:"
-echo "  app/migrate/backup: $app_user@127.0.0.1 → $app_db, $logging_db (ALL on schemas)"
+echo "  app/migrate:        $app_user@127.0.0.1 → $app_db, $logging_db (ALL on schemas)"
+echo "  backup/restore:     $backup_user@127.0.0.1 → schema ALL + SET_USER_ID/SYSTEM_USER (dump DEFINER)"
 echo "  cdn:                $cdn_user@127.0.0.1 → DML on $app_db, $logging_db"
 echo "  health:             $health_user@127.0.0.1 → DML on $app_db"
 echo "  cdc:                $cdc_user@127.0.0.1 → replication + SELECT on $app_db"
 echo "  root@localhost:     auth_socket (sudo mysql)"
-echo "recreate API/CDN/CDC/health so they pick up the new credentials"
+echo "recreate API so it picks up backup.env; other services do not load backup credentials"

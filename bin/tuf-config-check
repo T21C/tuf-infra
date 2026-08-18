@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 readonly config_dir=${TUF_CONFIG_DIR:-/srv/tuf/config}
 readonly example_dir=${TUF_CONFIG_EXAMPLE_DIR:-/srv/tuf/infra/config}
-readonly config_names=(stack common redis storage api cdn cdc health thumbnail-worker)
+readonly config_names=(stack common backup redis storage api cdn cdc health thumbnail-worker)
 
 errors=0
 
@@ -113,14 +113,15 @@ done
 [[ -r /srv/tuf/config/secrets/google-application-credentials.json ]] || fail "missing Google application credentials"
 
 app_user=$(value_of "$config_dir/common.env" DB_USER)
+backup_user=$(value_of "$config_dir/backup.env" BACKUP_DB_USER)
 cdn_user=$(value_of "$config_dir/cdn.env" DB_USER)
 health_user=$(value_of "$config_dir/health.env" DB_USER)
 cdc_user=$(value_of "$config_dir/cdc.env" CDC_DB_USER)
-for user in "$app_user" "$cdn_user" "$health_user" "$cdc_user"; do
+for user in "$app_user" "$backup_user" "$cdn_user" "$health_user" "$cdc_user"; do
   [[ $user != root ]] || fail "MySQL service users must not be root"
 done
 declare -A tuf_mysql_users=()
-for user in "$app_user" "$cdn_user" "$health_user" "$cdc_user"; do
+for user in "$app_user" "$backup_user" "$cdn_user" "$health_user" "$cdc_user"; do
   [[ -n $user ]] || continue
   if [[ -n ${tuf_mysql_users[$user]+x} ]]; then
     fail "MySQL service users must be distinct (duplicate '$user')"

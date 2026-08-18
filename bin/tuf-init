@@ -11,7 +11,7 @@ readonly repo_dir
 readonly source_config_dir=$repo_dir/config
 readonly target_root=/srv/tuf
 readonly target_config_dir=$target_root/config
-readonly config_names=(stack common redis storage api cdn cdc health thumbnail-worker)
+readonly config_names=(stack common backup redis storage api cdn cdc health thumbnail-worker)
 
 for required_command in docker flock systemctl; do
   command -v "$required_command" >/dev/null || {
