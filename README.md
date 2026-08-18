@@ -93,9 +93,10 @@ GitHub Actions call those paths directly (for example
 `/usr/local/sbin` are thin `exec` wrappers only, so they cannot silently
 drift from the checkout the way full script copies did.
 
-On each push to `main` (when repository variable `PRODUCTION_DEPLOY_ENABLED`
-is exactly `true`), workflow `Sync production infra` SSHes as `tuf-deploy` and
-runs:
+After the `CI` workflow validates a push to `main` (or a `workflow_dispatch`
+targeting `main`), its `sync-production` job runs only when repository variable
+`PRODUCTION_DEPLOY_ENABLED` is exactly `true`. It SSHes as `tuf-deploy` and
+runs the exact validated commit:
 
 ```sh
 sudo /srv/tuf/infra/bin/tuf-sync-infra <git-sha>
@@ -106,11 +107,22 @@ That command:
 - `git fetch` + detach `/srv/tuf/infra` to the exact SHA
 - refreshes `/usr/local/sbin` wrappers, sudoers, and systemd units
 - validates `compose.yml` against live `stack.env`
+- reloads `tuf-stack.service` when it was already active
+- leaves an inactive stack inactive; infra sync never enables or starts it
+- restores the previous infra SHA and host wiring if validation or reload fails
 - never overwrites `/srv/tuf/config/*.env`
 
-If `PRODUCTION_DEPLOY_ENABLED` is unset/false, the workflow **fails** instead of
-quietly succeeding with no host update. The `tuf-infra` repo must also have the
-same Tailscale + `TUF_DEPLOY_SSH_*` secrets as the app deploy workflows.
+If `PRODUCTION_DEPLOY_ENABLED` is unset/false, validation still runs but the
+production sync job is skipped. Manual infra syncs use the same `CI` workflow
+dispatch, so validation cannot be bypassed. The `tuf-infra` repo must also have
+the same Tailscale + `TUF_DEPLOY_SSH_*` secrets as the app deploy workflows.
+
+Production app deploy wrappers require `tuf-stack.service` to be both enabled
+and active before they pull images, run migrations, or change image tags. They
+exit with status `78` without changing production when the unit is not ready.
+The wrappers update tags and run migrations, but reconcile long-running
+containers only through `systemctl reload tuf-stack.service`. The unit validates
+the runtime configuration and Compose model before every start and reload.
 
 **One-time enablement** (root on the host), before the first Actions sync can
 succeed — allowlist the checkout paths and install wrappers:

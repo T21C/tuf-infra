@@ -2,15 +2,13 @@
 set -Eeuo pipefail
 
 # Detach /srv/tuf/infra to an immutable git SHA and refresh host wiring.
-# Deploy entrypoints live in this checkout (/srv/tuf/infra/bin/*). Copies under
-# /usr/local/sbin are thin exec wrappers so PATH/systemd callers still work.
-# Existing values in /srv/tuf/config/*.env are preserved. Schema additions with
-# safe defaults may be installed below so a new Compose service can be introduced
-# without making the immutable infra checkout impossible to validate.
+# Existing runtime values are preserved. If the production stack is active,
+# systemd remains the sole owner of the long-running Compose reconciliation.
 
 readonly INFRA_DIR=/srv/tuf/infra
 readonly INFRA_BIN=$INFRA_DIR/bin
 readonly STACK_ENV=/srv/tuf/config/stack.env
+readonly STACK_UNIT=tuf-stack.service
 readonly LOCK_FILE=/run/lock/tuf-deploy.lock
 
 if [[ $EUID -ne 0 ]]; then
@@ -53,7 +51,15 @@ if ! /usr/bin/git cat-file -t "$requested_sha" >/dev/null 2>&1; then
   exit 65
 fi
 
-/usr/bin/git checkout --detach --quiet "$requested_sha"
+previous_sha=$(/usr/bin/git rev-parse HEAD)
+readonly previous_sha
+stack_was_active=0
+if /usr/bin/systemctl is-active --quiet "$STACK_UNIT"; then
+  stack_was_active=1
+fi
+readonly stack_was_active
+sync_started=0
+sync_complete=0
 
 upsert_default() {
   local file=$1 key=$2 value=$3 temporary
@@ -72,22 +78,12 @@ install_env_if_missing() {
   echo "installed new config with safe defaults: $destination"
 }
 
-install_env_if_missing "$INFRA_DIR/config/thumbnail-worker.env.example" \
-  /srv/tuf/config/thumbnail-worker.env
-upsert_default /srv/tuf/config/api.env THUMBNAIL_RENDER_MODE local
-
-if [[ -d /srv/tuf/config/canary ]]; then
-  install_env_if_missing "$INFRA_DIR/config/canary/thumbnail-worker.env.example" \
-    /srv/tuf/config/canary/thumbnail-worker.env
-  upsert_default /srv/tuf/config/canary/api.env THUMBNAIL_RENDER_MODE local
-fi
-
 install_sbin_wrapper() {
   local name=$1
   local target=$INFRA_BIN/$name
   if [[ ! -x $target ]]; then
     echo "missing executable $target" >&2
-    exit 66
+    return 66
   fi
   /usr/bin/install -m 0755 -o root -g root /dev/stdin "/usr/local/sbin/$name" <<EOF
 #!/bin/sh
@@ -95,42 +91,107 @@ exec $target "\$@"
 EOF
 }
 
-# Primary tools: checkout bin/. Wrappers keep /usr/local/sbin working for PATH/systemd.
-install_sbin_wrapper tuf-config-check
-install_sbin_wrapper tuf-provision-mysql-users
-install_sbin_wrapper tuf-deploy-backend
-install_sbin_wrapper tuf-deploy-frontend
-install_sbin_wrapper tuf-recreate
-install_sbin_wrapper tuf-install-nginx-csp
-install_sbin_wrapper tuf-sync-infra
-install_sbin_wrapper tuf-prune-images
-install_sbin_wrapper tuf-ci-runner-failover
+install_checkout() {
+  install_env_if_missing "$INFRA_DIR/config/thumbnail-worker.env.example" \
+    /srv/tuf/config/thumbnail-worker.env
+  upsert_default /srv/tuf/config/api.env THUMBNAIL_RENDER_MODE local
 
-if [[ -x $INFRA_BIN/tuf-deploy-canary ]]; then
-  install_sbin_wrapper tuf-deploy-canary
+  if [[ -d /srv/tuf/config/canary ]]; then
+    install_env_if_missing "$INFRA_DIR/config/canary/thumbnail-worker.env.example" \
+      /srv/tuf/config/canary/thumbnail-worker.env
+    upsert_default /srv/tuf/config/canary/api.env THUMBNAIL_RENDER_MODE local
+  fi
+
+  # Primary tools: checkout bin/. Wrappers keep /usr/local/sbin working for PATH/systemd.
+  install_sbin_wrapper tuf-config-check
+  install_sbin_wrapper tuf-provision-mysql-users
+  install_sbin_wrapper tuf-deploy-backend
+  install_sbin_wrapper tuf-deploy-frontend
+  install_sbin_wrapper tuf-recreate
+  install_sbin_wrapper tuf-install-nginx-csp
+  install_sbin_wrapper tuf-sync-infra
+  install_sbin_wrapper tuf-prune-images
+  install_sbin_wrapper tuf-ci-runner-failover
+
+  if [[ -x $INFRA_BIN/tuf-deploy-canary ]]; then
+    install_sbin_wrapper tuf-deploy-canary
+  fi
+  if [[ -x $INFRA_BIN/tuf-canary-config-check ]]; then
+    install_sbin_wrapper tuf-canary-config-check
+  fi
+
+  /usr/bin/install -d -m 0755 -o root -g root /usr/local/share/tuf
+  /usr/bin/install -m 0644 -o root -g root \
+    "$INFRA_DIR/nginx/tuf-csp.conf" /usr/local/share/tuf/tuf-csp.conf
+
+  /usr/sbin/visudo -cf "$INFRA_DIR/sudoers/tuf-deploy"
+  /usr/bin/install -m 0440 -o root -g root \
+    "$INFRA_DIR/sudoers/tuf-deploy" /etc/sudoers.d/tuf-deploy
+
+  /usr/bin/install -m 0644 -o root -g root \
+    "$INFRA_DIR/systemd/tuf-stack.service" /etc/systemd/system/tuf-stack.service
+  if [[ -f $INFRA_DIR/systemd/tuf-canary.service ]]; then
+    /usr/bin/install -m 0644 -o root -g root \
+      "$INFRA_DIR/systemd/tuf-canary.service" /etc/systemd/system/tuf-canary.service
+  fi
+  if [[ -f $INFRA_DIR/systemd/tuf-ci-runner-failover.service ]]; then
+    /usr/bin/install -m 0644 -o root -g root \
+      "$INFRA_DIR/systemd/tuf-ci-runner-failover.service" \
+      /etc/systemd/system/tuf-ci-runner-failover.service
+    /usr/bin/install -m 0644 -o root -g root \
+      "$INFRA_DIR/systemd/tuf-ci-runner-failover.timer" \
+      /etc/systemd/system/tuf-ci-runner-failover.timer
+  fi
+  /usr/bin/systemctl daemon-reload
+
+  "$INFRA_BIN/tuf-config-check"
+  /usr/bin/docker compose --env-file "$STACK_ENV" -f "$INFRA_DIR/compose.yml" config --quiet
+}
+
+rollback_sync() {
+  local original_status=$1 rollback_failed=0
+  trap - EXIT INT TERM
+  echo "infra sync failed; restoring $previous_sha" >&2
+
+  if ! /usr/bin/git checkout --detach --quiet "$previous_sha"; then
+    echo "failed to restore infra checkout $previous_sha" >&2
+    rollback_failed=1
+  elif ! install_checkout; then
+    echo "failed to restore host wiring from $previous_sha" >&2
+    rollback_failed=1
+  elif (( stack_was_active == 1 )) && ! /usr/bin/systemctl reload "$STACK_UNIT"; then
+    echo "failed to reload $STACK_UNIT after restoring $previous_sha" >&2
+    rollback_failed=1
+  fi
+
+  if (( rollback_failed == 0 )); then
+    echo "infra rollback complete: $previous_sha" >&2
+  else
+    echo "infra rollback failed; manual recovery is required" >&2
+  fi
+  exit "$original_status"
+}
+
+on_exit() {
+  local status=$?
+  if (( status != 0 && sync_started == 1 && sync_complete == 0 )); then
+    rollback_sync "$status"
+  fi
+}
+trap on_exit EXIT
+trap 'exit 130' INT TERM
+
+sync_started=1
+/usr/bin/git checkout --detach --quiet "$requested_sha"
+install_checkout
+
+if (( stack_was_active == 1 )); then
+  /usr/bin/systemctl reload "$STACK_UNIT"
+  echo "reloaded active $STACK_UNIT"
+else
+  echo "$STACK_UNIT is inactive; infra synced without starting production"
 fi
-if [[ -x $INFRA_BIN/tuf-canary-config-check ]]; then
-  install_sbin_wrapper tuf-canary-config-check
-fi
 
-/usr/bin/install -d -m 0755 -o root -g root /usr/local/share/tuf
-/usr/bin/install -m 0644 -o root -g root "$INFRA_DIR/nginx/tuf-csp.conf" /usr/local/share/tuf/tuf-csp.conf
-
-/usr/sbin/visudo -cf "$INFRA_DIR/sudoers/tuf-deploy"
-/usr/bin/install -m 0440 -o root -g root "$INFRA_DIR/sudoers/tuf-deploy" /etc/sudoers.d/tuf-deploy
-
-/usr/bin/install -m 0644 -o root -g root "$INFRA_DIR/systemd/tuf-stack.service" /etc/systemd/system/tuf-stack.service
-if [[ -f $INFRA_DIR/systemd/tuf-canary.service ]]; then
-  /usr/bin/install -m 0644 -o root -g root "$INFRA_DIR/systemd/tuf-canary.service" /etc/systemd/system/tuf-canary.service
-fi
-if [[ -f $INFRA_DIR/systemd/tuf-ci-runner-failover.service ]]; then
-  /usr/bin/install -m 0644 -o root -g root "$INFRA_DIR/systemd/tuf-ci-runner-failover.service" \
-    /etc/systemd/system/tuf-ci-runner-failover.service
-  /usr/bin/install -m 0644 -o root -g root "$INFRA_DIR/systemd/tuf-ci-runner-failover.timer" \
-    /etc/systemd/system/tuf-ci-runner-failover.timer
-fi
-/usr/bin/systemctl daemon-reload
-
-/usr/bin/docker compose --env-file "$STACK_ENV" -f "$INFRA_DIR/compose.yml" config --quiet
-
+sync_complete=1
+trap - EXIT INT TERM
 echo "infra synced: $requested_sha (scripts from $INFRA_BIN)"

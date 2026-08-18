@@ -42,7 +42,7 @@ sql_quote() {
 }
 
 sql_ident() {
-  /usr/bin/printf '`%s`' "$1"
+  /usr/bin/printf '%s%s%s' '`' "$1" '`'
 }
 
 run_sql() {
@@ -102,8 +102,9 @@ for user in "$app_user" "$cdn_user" "$health_user" "$cdc_user"; do
 done
 
 readonly dml='SELECT, INSERT, UPDATE, DELETE, EXECUTE, SHOW VIEW, CREATE TEMPORARY TABLES, LOCK TABLES'
-readonly app_db_ident=$(sql_ident "$app_db")
-readonly logging_db_ident=$(sql_ident "$logging_db")
+app_db_ident=$(sql_ident "$app_db")
+logging_db_ident=$(sql_ident "$logging_db")
+readonly app_db_ident logging_db_ident
 
 run_sql <<SQL
 CREATE DATABASE IF NOT EXISTS $app_db_ident CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

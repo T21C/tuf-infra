@@ -15,12 +15,13 @@ value_of() {
 readonly production_dir=/srv/tuf/config
 readonly production_common=$production_dir/common.env
 readonly canary_common=/srv/tuf/config/canary/common.env
-readonly production_database=$(value_of "$production_common" DB_DATABASE)
-readonly canary_database=$(value_of "$canary_common" DB_DATABASE)
-readonly app_user=$(value_of "$production_common" DB_USER)
-readonly cdn_user=$(value_of "$production_dir/cdn.env" DB_USER)
-readonly health_user=$(value_of "$production_dir/health.env" DB_USER)
-readonly cdc_user=$(value_of "$production_dir/cdc.env" CDC_DB_USER)
+production_database=$(value_of "$production_common" DB_DATABASE)
+canary_database=$(value_of "$canary_common" DB_DATABASE)
+app_user=$(value_of "$production_common" DB_USER)
+cdn_user=$(value_of "$production_dir/cdn.env" DB_USER)
+health_user=$(value_of "$production_dir/health.env" DB_USER)
+cdc_user=$(value_of "$production_dir/cdc.env" CDC_DB_USER)
+readonly production_database canary_database app_user cdn_user health_user cdc_user
 
 for value in "$production_database" "$canary_database" "$app_user" "$cdn_user" "$health_user" "$cdc_user"; do
   [[ $value =~ ^[A-Za-z0-9_]+$ ]] || {

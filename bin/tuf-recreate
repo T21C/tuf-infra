@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 readonly INFRA_DIR=/srv/tuf/infra
 readonly LOCK_FILE=/run/lock/tuf-deploy.lock
+readonly STACK_UNIT=tuf-stack.service
 readonly ALLOWED_SERVICES=(frontend api cdn cdc health thumbnail-worker)
 
 usage() {
@@ -73,6 +74,17 @@ fi
   echo "missing stack env: $STACK_ENV" >&2
   exit 66
 }
+
+if [[ $stack == production ]]; then
+  if ! /usr/bin/systemctl is-enabled --quiet "$STACK_UNIT"; then
+    echo "$STACK_UNIT is not enabled; refusing production recreate" >&2
+    exit 78
+  fi
+  if ! /usr/bin/systemctl is-active --quiet "$STACK_UNIT"; then
+    echo "$STACK_UNIT is not active; refusing production recreate" >&2
+    exit 78
+  fi
+fi
 
 exec 9>"$LOCK_FILE"
 /usr/bin/flock -n 9 || {

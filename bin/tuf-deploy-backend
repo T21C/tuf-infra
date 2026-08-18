@@ -4,8 +4,8 @@ set -Eeuo pipefail
 readonly INFRA_DIR=/srv/tuf/infra
 readonly STACK_ENV=/srv/tuf/config/stack.env
 readonly LOCK_FILE=/run/lock/tuf-deploy.lock
+readonly STACK_UNIT=tuf-stack.service
 readonly COMPOSE=(/usr/bin/docker compose --env-file "$STACK_ENV" -f "$INFRA_DIR/compose.yml")
-readonly CORE_SERVICES=(api cdn cdc health)
 readonly BACKEND_SERVICES=(api cdn cdc health thumbnail-worker)
 
 if [[ $# -ne 1 || ! $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]{6,127}$ ]]; then
@@ -19,6 +19,15 @@ exec 9>"$LOCK_FILE"
   echo "another TUF deployment is already running" >&2
   exit 75
 }
+
+if ! /usr/bin/systemctl is-enabled --quiet "$STACK_UNIT"; then
+  echo "$STACK_UNIT is not enabled; refusing production deployment before explicit cutover" >&2
+  exit 78
+fi
+if ! /usr/bin/systemctl is-active --quiet "$STACK_UNIT"; then
+  echo "$STACK_UNIT is not active; refusing production deployment" >&2
+  exit 78
+fi
 
 previous_tag=$(/usr/bin/awk -F= '$1 == "TUF_BACKEND_IMAGE_TAG" { print $2; exit }' "$STACK_ENV")
 if [[ -z $previous_tag ]]; then
@@ -44,33 +53,40 @@ set_tag() {
 rollback() {
   echo "deployment failed; rolling back to $previous_tag" >&2
   set_tag "$previous_tag"
-  "${COMPOSE[@]}" pull "${CORE_SERVICES[@]}" || true
-  "${COMPOSE[@]}" up -d --remove-orphans --wait "${CORE_SERVICES[@]}" || true
-  # The image before the first worker release has no worker entrypoint. Core API
-  # rollback must still complete even if that older image cannot start the worker.
-  if ! "${COMPOSE[@]}" up -d --no-deps --wait thumbnail-worker; then
-    "${COMPOSE[@]}" stop thumbnail-worker || true
+  if ! "${COMPOSE[@]}" pull "${BACKEND_SERVICES[@]}"; then
+    echo "rollback failed while pulling backend image $previous_tag" >&2
+    return 1
   fi
+  if ! /usr/bin/systemctl reload "$STACK_UNIT"; then
+    echo "rollback failed while reloading $STACK_UNIT with $previous_tag" >&2
+    return 1
+  fi
+  echo "rolled back backend to $previous_tag" >&2
+}
+
+fail_with_rollback() {
+  local reason=$1
+  echo "$reason" >&2
+  if ! rollback; then
+    echo "automatic rollback failed; inspect $STACK_UNIT and $STACK_ENV immediately" >&2
+  fi
+  exit 1
 }
 
 set_tag "$requested_tag"
 if ! "${COMPOSE[@]}" pull "${BACKEND_SERVICES[@]}"; then
-  rollback
-  exit 1
+  fail_with_rollback "backend image pull failed"
 fi
 
 # Migrate on the new image before the old containers are replaced. Services are still
 # running the previous tag here, so migrations must be forward-compatible (expand now,
 # drop columns in a later release).
 if ! "${COMPOSE[@]}" run --rm --no-deps migrate; then
-  echo "database migration failed; not recreating services" >&2
-  rollback
-  exit 1
+  fail_with_rollback "database migration failed; not reloading production services"
 fi
 
-if ! "${COMPOSE[@]}" up -d --remove-orphans --wait "${BACKEND_SERVICES[@]}"; then
-  rollback
-  exit 1
+if ! /usr/bin/systemctl reload "$STACK_UNIT"; then
+  fail_with_rollback "$STACK_UNIT reload failed"
 fi
 
 echo "backend deployed: $requested_tag"

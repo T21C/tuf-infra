@@ -9,12 +9,11 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: infra-ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   validate:
+    concurrency:
+      group: infra-ci-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubuntu-latest"]') }}
     steps:
       - name: Checkout repository
@@ -82,3 +81,60 @@ jobs:
           config
           --no-env-resolution
           --quiet
+
+  sync-production:
+    needs: validate
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      vars.PRODUCTION_DEPLOY_ENABLED == 'true'
+    concurrency:
+      group: tuf-infra-production
+      cancel-in-progress: false
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubuntu-latest"]') }}
+    steps:
+      - name: Require production deploy host
+        env:
+          DEPLOY_HOST: ${{ vars.TUF_DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          [[ -n "$DEPLOY_HOST" ]] || {
+            echo "::error::Repository variable TUF_DEPLOY_HOST is required" >&2
+            exit 64
+          }
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:gh-runner
+          ping: ${{ vars.TUF_DEPLOY_HOST }}
+
+      - name: Configure deploy SSH identity
+        env:
+          DEPLOY_KEY: ${{ secrets.TUF_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.TUF_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ -n "$DEPLOY_KEY" ]] || {
+            echo "::error::secret TUF_DEPLOY_SSH_KEY is empty" >&2
+            exit 1
+          }
+          [[ -n "$KNOWN_HOSTS" ]] || {
+            echo "::error::secret TUF_DEPLOY_KNOWN_HOSTS is empty" >&2
+            exit 1
+          }
+          install -m 700 -d ~/.ssh
+          install -m 600 /dev/null ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          install -m 600 /dev/null ~/.ssh/known_hosts
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Sync validated infra checkout
+        env:
+          DEPLOY_HOST: ${{ vars.TUF_DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 "tuf-deploy@${DEPLOY_HOST}" \
+            "sudo /srv/tuf/infra/bin/tuf-sync-infra '${{ github.sha }}'"
