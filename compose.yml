@@ -95,8 +95,8 @@ services:
       start_period: 10m
     # Was 1536m; Node+Chromium+ES under load OOM-killed (exit 137). memswap_limit
     # = mem + ~768m swap cushion (requires host swap; else equals mem_limit behavior).
-    mem_limit: 2560m
-    memswap_limit: 3328m
+    mem_limit: 6048m
+    memswap_limit: 6528m
     pids_limit: 512
 
   thumbnail-worker:
@@ -146,8 +146,8 @@ services:
       retries: 8
       start_period: 30s
     # Was 1024m; image/zip work aborted under pressure (exit 134).
-    mem_limit: 1536m
-    memswap_limit: 2048m
+    mem_limit: 4384m
+    memswap_limit: 5120m
     pids_limit: 384
 
   cdc:
