@@ -1,7 +1,11 @@
 name: CI
 
+# pull_request / merge_group: script and Compose validation
+# push to main / workflow_dispatch: that plus production sync when enabled
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
   push:
     branches: [main]
   workflow_dispatch:
