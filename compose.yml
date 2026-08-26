@@ -65,7 +65,7 @@ services:
       NODE_ENV: production
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-application-credentials.json
       # Cap V8 so Chromium/sharp/native buffers retain cgroup headroom (exit 137 = cgroup OOM).
-      NODE_OPTIONS: --max-old-space-size=1280
+      NODE_OPTIONS: --max-old-space-size=1536
     env_file:
       # DB_USER is API/migrate (schema ALL). backup.env is dump/restore only.
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
@@ -92,12 +92,13 @@ services:
       timeout: 5s
       retries: 8
       # A mapping/indexer change can require a one-time full production reindex
-      # before the API starts listening. The 2 CPU host needs several minutes.
+      # before the API starts listening. Leave several minutes even on 4 OCPU.
       start_period: 10m
+    # 24GB host: ~8GB stays outside Compose (OS, MySQL, ES, Redis, Nginx).
     # Was 1536m; Node+Chromium+ES under load OOM-killed (exit 137). memswap_limit
     # = mem + ~768m swap cushion (requires host swap; else equals mem_limit behavior).
-    mem_limit: 6048m
-    memswap_limit: 6528m
+    mem_limit: 6144m
+    memswap_limit: 6912m
     pids_limit: 512
 
   thumbnail-worker:
@@ -117,9 +118,10 @@ services:
       timeout: 5s
       retries: 8
       start_period: 45s
-    cpus: 0.75
-    mem_limit: 768m
-    memswap_limit: 1024m
+    # One Chromium render at a time; 1.0 OCPU is enough burst without crowding pack 7z.
+    cpus: 1.0
+    mem_limit: 1024m
+    memswap_limit: 1280m
     pids_limit: 128
 
   cdn:
@@ -131,7 +133,9 @@ services:
     environment:
       NODE_ENV: production
       # Leave room for sharp/native + zip buffers (exit 134 = V8 abort / heap OOM).
-      NODE_OPTIONS: --max-old-space-size=1024
+      NODE_OPTIONS: --max-old-space-size=1536
+      # Match pack extract overlap (fs + crypto) without matching unbounded 7z fan-out.
+      UV_THREADPOOL_SIZE: "4"
     env_file:
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/storage.env
@@ -147,9 +151,13 @@ services:
       retries: 8
       start_period: 30s
     # Was 1024m; image/zip work aborted under pressure (exit 134).
-    mem_limit: 4384m
-    memswap_limit: 5120m
-    pids_limit: 384
+    mem_limit: 5120m
+    memswap_limit: 5888m
+    pids_limit: 512
+    # 4 OCPU Ampere (4 cores) / 24GB. Pack 7z children inherit this cgroup.
+    # 2.0 leaves ≥2 cores for API + MySQL + ES + Nginx when thumbnail is idle
+    # (≥1 core if a Chromium render overlaps a pack job).
+    cpus: 2.0
 
   cdc:
     <<: *backend-service

@@ -81,6 +81,14 @@ queue_prefix=$(value_of "$worker_env" THUMBNAIL_QUEUE_PREFIX)
 [[ $(value_of "$worker_env" THUMBNAILS_CACHE_PATH) == /srv/tuf/data/thumbnails ]] || \
   fail "THUMBNAILS_CACHE_PATH in thumbnail-worker.env must use the shared thumbnails mount"
 
+cdn_env=$config_dir/cdn.env
+[[ $(value_of "$cdn_env" PACK_DOWNLOAD_MAX_CONCURRENT_JOBS) == 2 ]] || \
+  fail "PACK_DOWNLOAD_MAX_CONCURRENT_JOBS must be 2 on this host"
+[[ $(value_of "$cdn_env" PACK_DOWNLOAD_PARALLELISM) == 4 ]] || \
+  fail "PACK_DOWNLOAD_PARALLELISM must be 4 on this host"
+[[ $(value_of "$cdn_env" CDN_7Z_THREADS) == 2 ]] || \
+  fail "CDN_7Z_THREADS must be 2 on this host"
+
 for numeric_key in \
   THUMBNAIL_WORKER_PORT \
   THUMBNAIL_JOB_ATTEMPTS \

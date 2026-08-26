@@ -71,6 +71,21 @@ upsert_default() {
   /usr/bin/mv -f "$temporary" "$file"
 }
 
+# Overwrite (or insert) a key. Used for host-sized CPU clamps that must move with the box.
+upsert() {
+  local file=$1 key=$2 value=$3 temporary
+  [[ -f $file ]] || return 0
+  temporary=$(/usr/bin/mktemp "${file}.XXXXXX")
+  /usr/bin/awk -F= -v key="$key" -v value="$value" '
+    $1 == key { print key "=" value; changed = 1; next }
+    { print }
+    END { if (!changed) print key "=" value }
+  ' "$file" >"$temporary"
+  /usr/bin/chown --reference="$file" "$temporary"
+  /usr/bin/chmod --reference="$file" "$temporary"
+  /usr/bin/mv -f "$temporary" "$file"
+}
+
 install_env_if_missing() {
   local source=$1 destination=$2
   [[ -f $destination ]] && return 0
@@ -95,11 +110,17 @@ install_checkout() {
   install_env_if_missing "$INFRA_DIR/config/thumbnail-worker.env.example" \
     /srv/tuf/config/thumbnail-worker.env
   upsert_default /srv/tuf/config/api.env THUMBNAIL_RENDER_MODE local
+  upsert /srv/tuf/config/cdn.env PACK_DOWNLOAD_MAX_CONCURRENT_JOBS 2
+  upsert /srv/tuf/config/cdn.env PACK_DOWNLOAD_PARALLELISM 4
+  upsert /srv/tuf/config/cdn.env CDN_7Z_THREADS 2
 
   if [[ -d /srv/tuf/config/canary ]]; then
     install_env_if_missing "$INFRA_DIR/config/canary/thumbnail-worker.env.example" \
       /srv/tuf/config/canary/thumbnail-worker.env
     upsert_default /srv/tuf/config/canary/api.env THUMBNAIL_RENDER_MODE local
+    upsert /srv/tuf/config/canary/cdn.env PACK_DOWNLOAD_MAX_CONCURRENT_JOBS 2
+    upsert /srv/tuf/config/canary/cdn.env PACK_DOWNLOAD_PARALLELISM 4
+    upsert /srv/tuf/config/canary/cdn.env CDN_7Z_THREADS 2
   fi
 
   # Primary tools: checkout bin/. Wrappers keep /usr/local/sbin working for PATH/systemd.
