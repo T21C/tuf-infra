@@ -87,10 +87,13 @@ if [[ $stack == production ]]; then
 fi
 
 exec 9>"$LOCK_FILE"
-/usr/bin/flock -n 9 || {
-  echo "another TUF deployment is already running" >&2
-  exit 75
-}
+if ! /usr/bin/flock -n 9; then
+  echo "another TUF deployment is running; waiting up to 900s" >&2
+  /usr/bin/flock -w 900 9 || {
+    echo "timed out waiting for another TUF deployment to finish" >&2
+    exit 75
+  }
+fi
 
 "${COMPOSE[@]}" up -d --force-recreate --no-deps --wait "${services[@]}"
 echo "recreated ($stack): ${services[*]}"

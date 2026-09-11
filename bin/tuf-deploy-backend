@@ -15,10 +15,13 @@ fi
 
 readonly requested_tag=$1
 exec 9>"$LOCK_FILE"
-/usr/bin/flock -n 9 || {
-  echo "another TUF deployment is already running" >&2
-  exit 75
-}
+if ! /usr/bin/flock -n 9; then
+  echo "another TUF deployment is running; waiting up to 900s" >&2
+  /usr/bin/flock -w 900 9 || {
+    echo "timed out waiting for another TUF deployment to finish" >&2
+    exit 75
+  }
+fi
 
 if ! /usr/bin/systemctl is-enabled --quiet "$STACK_UNIT"; then
   echo "$STACK_UNIT is not enabled; refusing production deployment before explicit cutover" >&2
