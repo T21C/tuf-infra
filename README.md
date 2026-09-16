@@ -113,6 +113,27 @@ That command:
 - restores the previous infra SHA and host wiring if validation or reload fails
 - never overwrites `/srv/tuf/config/*.env`
 
+## Auto-submission runtime configuration
+
+The root-only `bin/tuf-configure-auto-submission` tool updates the six production
+API values required by TUFReplay auto-submission. It accepts a one-time temporary
+input file, validates every value, updates `/srv/tuf/config/api.env` atomically,
+and restores the previous configuration if validation or Compose rendering fails.
+It deliberately does not belong to the `tuf-deploy` sudo allowlist.
+
+After this infra revision has been synced, run the workstation launcher:
+
+```sh
+bin/tuf-send-auto-submission-config --enable
+```
+
+It reads the two existing mutually authenticated tokens from the home server,
+creates a mode-600 temporary input file on TUF, and opens an interactive SSH
+session for the TUF administrator's sudo password. The input file is removed in
+all cases. Omit `--enable` to configure the integration while keeping automatic
+submissions disabled. Afterwards, dispatch the normal backend deployment workflow
+to apply the configuration through the existing migration and service-reload path.
+
 If `PRODUCTION_DEPLOY_ENABLED` is unset/false, validation still runs but the
 production sync job is skipped. Manual infra syncs use the same `CI` workflow
 dispatch, so validation cannot be bypassed. The `tuf-infra` repo must also have

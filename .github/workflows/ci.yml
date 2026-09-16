@@ -28,6 +28,8 @@ jobs:
           shellcheck
           bin/tuf-install-docker
           bin/tuf-config-check
+          bin/tuf-configure-auto-submission
+          bin/tuf-send-auto-submission-config
           bin/tuf-cutover-production
           bin/tuf-canary-config-check
           bin/tuf-deploy-backend
