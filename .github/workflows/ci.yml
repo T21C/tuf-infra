@@ -30,6 +30,8 @@ jobs:
           bin/tuf-config-check
           bin/tuf-configure-auto-submission
           bin/tuf-send-auto-submission-config
+          bin/tuf-bootstrap-runtime-defaults
+          bin/tuf-bootstrap-tuf-runtime-defaults
           bin/tuf-cutover-production
           bin/tuf-canary-config-check
           bin/tuf-deploy-backend

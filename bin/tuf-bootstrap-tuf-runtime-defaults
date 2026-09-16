@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Run this one-time launcher from an administrator workstation. It transfers
+# the non-secret bootstrap script to a mode-600 temporary file, then opens an
+# interactive SSH session for the TUF administrator's sudo password.
+
+readonly tuf_host=${TUF_AUTO_SUBMISSION_HOST:-tufadmin@140.238.2.242}
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+readonly script_dir
+readonly bootstrap_script="$script_dir/tuf-bootstrap-runtime-defaults"
+
+[[ -r $bootstrap_script ]] || {
+  echo "missing bootstrap script: $bootstrap_script" >&2
+  exit 66
+}
+
+remote_script=$(
+  /usr/bin/ssh "$tuf_host" \
+    'set -Eeuo pipefail; umask 077; script_file=$(/usr/bin/mktemp /tmp/tuf-runtime-defaults.XXXXXX); /usr/bin/cat >"$script_file"; /usr/bin/printf "%s" "$script_file"' \
+    <"$bootstrap_script"
+)
+
+[[ $remote_script =~ ^/tmp/tuf-runtime-defaults\.[A-Za-z0-9._-]+$ ]] || {
+  echo "failed to create the protected TUF bootstrap file" >&2
+  exit 1
+}
+
+cleanup() {
+  /usr/bin/ssh "$tuf_host" /usr/bin/rm -f -- "$remote_script" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+echo "Enter the remote TUF sudo password to install the missing non-secret runtime defaults."
+/usr/bin/ssh -tt "$tuf_host" "sudo /usr/bin/env bash '$remote_script'"

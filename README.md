@@ -134,6 +134,19 @@ all cases. Omit `--enable` to configure the integration while keeping automatic
 submissions disabled. Afterwards, dispatch the normal backend deployment workflow
 to apply the configuration through the existing migration and service-reload path.
 
+### Recovering an older host configuration
+
+If the first `main` sync exits with runtime configuration errors, run this once
+from an administrator workstation before retrying the GitHub Actions workflow:
+
+```sh
+bin/tuf-bootstrap-tuf-runtime-defaults
+```
+
+It prompts for the TUF sudo password and inserts only the documented non-secret
+defaults required by the current infra schema. It does not replace any existing
+value and does not reload or deploy a service.
+
 If `PRODUCTION_DEPLOY_ENABLED` is unset/false, validation still runs but the
 production sync job is skipped. Manual infra syncs use the same `CI` workflow
 dispatch, so validation cannot be bypassed. The `tuf-infra` repo must also have
