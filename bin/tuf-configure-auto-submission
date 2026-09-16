@@ -44,6 +44,16 @@ readonly input_file=$2
 [[ -f $STACK_ENV ]] || fail "missing $STACK_ENV"
 [[ -x $CONFIG_CHECK ]] || fail "missing executable $CONFIG_CHECK"
 
+# A failed invocation before the atomic rename can leave root-only temporary
+# files behind. They contain no changes to the live config, but remove them
+# before accepting the next one-time input file.
+shopt -s nullglob
+for stale_file in "${API_ENV}".auto-submission-backup.* "${API_ENV}".auto-submission.*; do
+  [[ -f $stale_file && ! -L $stale_file ]] || continue
+  /usr/bin/rm -f -- "$stale_file"
+done
+shopt -u nullglob
+
 declare -a input_lines=()
 mapfile -t input_lines <"$input_file"
 /usr/bin/rm -f -- "$input_file"
@@ -101,7 +111,7 @@ temporary=$(/usr/bin/mktemp "${API_ENV}.auto-submission.XXXXXX")
 declare -A seen=()
 while IFS= read -r line || [[ -n $line ]]; do
   current_key=${line%%=*}
-  if [[ -n ${values[$current_key]+present} ]]; then
+  if [[ -n $current_key ]] && [[ -n ${values[$current_key]+present} ]]; then
     /usr/bin/printf '%s=%s\n' "$current_key" "${values[$current_key]}"
     seen[$current_key]=1
   else
