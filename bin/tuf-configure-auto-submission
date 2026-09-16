@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Store the production-only TUFReplay auto-submission settings in api.env.
+# This command is intentionally root-only and never belongs in the deployment
+# account's sudo allowlist. The local launcher transfers a short-lived, mode-600
+# input file and asks an administrator to authenticate with sudo.
+
+readonly INFRA_DIR=/srv/tuf/infra
+readonly CONFIG_DIR=/srv/tuf/config
+readonly API_ENV="$CONFIG_DIR/api.env"
+readonly STACK_ENV="$CONFIG_DIR/stack.env"
+readonly CONFIG_CHECK="$INFRA_DIR/bin/tuf-config-check"
+readonly COMPOSE=(/usr/bin/docker compose --env-file "$STACK_ENV" -f "$INFRA_DIR/compose.yml")
+readonly REQUIRED_KEYS=(
+  TUF_AUTO_SUBMISSION_OAUTH_CLIENT_ID
+  AUTO_SUBMISSION_ENABLED
+  AUTO_SUBMISSION_TRUSTED_USER_IDS
+  AUTO_SUBMISSION_API_URL
+  TUF_TO_AUTO_SUBMISSION_TOKEN
+  AUTO_SUBMISSION_TO_TUF_TOKEN
+)
+
+fail() {
+  echo "error: $*" >&2
+  exit 64
+}
+
+if [[ $EUID -ne 0 ]]; then
+  echo "run this command as root" >&2
+  exit 77
+fi
+
+if [[ $# -ne 2 || $1 != --file ]]; then
+  echo "usage: tuf-configure-auto-submission --file /tmp/tuf-auto-submission.XXXXXX" >&2
+  exit 64
+fi
+
+readonly input_file=$2
+[[ $input_file =~ ^/tmp/tuf-auto-submission\.[A-Za-z0-9._-]+$ ]] || \
+  fail "input file must be a temporary /tmp/tuf-auto-submission.* file"
+[[ -f $input_file && ! -L $input_file ]] || fail "input file is missing or is not a regular file"
+[[ -f $API_ENV ]] || fail "missing $API_ENV"
+[[ -f $STACK_ENV ]] || fail "missing $STACK_ENV"
+[[ -x $CONFIG_CHECK ]] || fail "missing executable $CONFIG_CHECK"
+
+declare -a input_lines=()
+mapfile -t input_lines <"$input_file"
+/usr/bin/rm -f -- "$input_file"
+
+declare -A values=()
+for line in "${input_lines[@]}"; do
+  [[ $line == *=* ]] || fail "each input line must use KEY=VALUE"
+  key=${line%%=*}
+  value=${line#*=}
+  case $key in
+    TUF_AUTO_SUBMISSION_OAUTH_CLIENT_ID|AUTO_SUBMISSION_ENABLED|AUTO_SUBMISSION_TRUSTED_USER_IDS|AUTO_SUBMISSION_API_URL|TUF_TO_AUTO_SUBMISSION_TOKEN|AUTO_SUBMISSION_TO_TUF_TOKEN)
+      ;;
+    *)
+      fail "unsupported configuration key: $key"
+      ;;
+  esac
+  [[ -z ${values[$key]+present} ]] || fail "duplicate configuration key: $key"
+  values[$key]=$value
+done
+
+for key in "${REQUIRED_KEYS[@]}"; do
+  [[ -n ${values[$key]+present} ]] || fail "missing configuration key: $key"
+done
+
+client_id=${values[TUF_AUTO_SUBMISSION_OAUTH_CLIENT_ID]}
+enabled=${values[AUTO_SUBMISSION_ENABLED]}
+trusted_user_ids=${values[AUTO_SUBMISSION_TRUSTED_USER_IDS]}
+api_url=${values[AUTO_SUBMISSION_API_URL]}
+tuf_to_auto_token=${values[TUF_TO_AUTO_SUBMISSION_TOKEN]}
+auto_to_tuf_token=${values[AUTO_SUBMISSION_TO_TUF_TOKEN]}
+
+[[ $client_id =~ ^[a-f0-9]{32}$ ]] || fail "TUF_AUTO_SUBMISSION_OAUTH_CLIENT_ID must be a 32-character lowercase hex client ID"
+[[ $enabled == true || $enabled == false ]] || fail "AUTO_SUBMISSION_ENABLED must be true or false"
+[[ $api_url == https://tufreplay-auto.impl1113.dev ]] || fail "AUTO_SUBMISSION_API_URL must use the production auto-submission origin"
+[[ $trusted_user_ids =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(,[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})*$ ]] || \
+  fail "AUTO_SUBMISSION_TRUSTED_USER_IDS must be a comma-separated lowercase UUID list"
+[[ $tuf_to_auto_token =~ ^[A-Za-z0-9._~-]{32,512}$ ]] || \
+  fail "TUF_TO_AUTO_SUBMISSION_TOKEN must be 32-512 URL-safe token characters"
+[[ $auto_to_tuf_token =~ ^[A-Za-z0-9._~-]{32,512}$ ]] || \
+  fail "AUTO_SUBMISSION_TO_TUF_TOKEN must be 32-512 URL-safe token characters"
+[[ $tuf_to_auto_token != "$auto_to_tuf_token" ]] || fail "the two auto-submission tokens must differ"
+
+declare -A known_user_ids=()
+IFS=',' read -r -a user_ids <<<"$trusted_user_ids"
+for user_id in "${user_ids[@]}"; do
+  [[ -z ${known_user_ids[$user_id]+present} ]] || \
+    fail "AUTO_SUBMISSION_TRUSTED_USER_IDS must not contain duplicates"
+  known_user_ids[$user_id]=1
+done
+
+backup=$(/usr/bin/mktemp "${API_ENV}.auto-submission-backup.XXXXXX")
+temporary=$(/usr/bin/mktemp "${API_ENV}.auto-submission.XXXXXX")
+/usr/bin/cp --preserve=mode,ownership "$API_ENV" "$backup"
+
+declare -A seen=()
+while IFS= read -r line || [[ -n $line ]]; do
+  current_key=${line%%=*}
+  if [[ -n ${values[$current_key]+present} ]]; then
+    /usr/bin/printf '%s=%s\n' "$current_key" "${values[$current_key]}"
+    seen[$current_key]=1
+  else
+    /usr/bin/printf '%s\n' "$line"
+  fi
+done <"$API_ENV" >"$temporary"
+
+for key in "${REQUIRED_KEYS[@]}"; do
+  if [[ -z ${seen[$key]+present} ]]; then
+    /usr/bin/printf '%s=%s\n' "$key" "${values[$key]}" >>"$temporary"
+  fi
+done
+
+/usr/bin/chown --reference="$API_ENV" "$temporary"
+/usr/bin/chmod --reference="$API_ENV" "$temporary"
+/usr/bin/mv -f "$temporary" "$API_ENV"
+
+restore_config() {
+  /usr/bin/mv -f "$backup" "$API_ENV"
+}
+
+if ! "$CONFIG_CHECK"; then
+  restore_config
+  echo "auto-submission configuration was rejected; restored the previous api.env" >&2
+  exit 78
+fi
+
+if ! "${COMPOSE[@]}" config --quiet; then
+  restore_config
+  echo "auto-submission configuration did not render the Compose model; restored the previous api.env" >&2
+  exit 78
+fi
+
+/usr/bin/rm -f "$backup"
+echo "auto-submission runtime configuration stored; deploy the backend to load it"

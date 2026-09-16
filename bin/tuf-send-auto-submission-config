@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Run this from an administrator workstation after the matching tuf-infra
+# revision has been synced. It reads the already-configured Replay tokens from
+# the home server, transfers a mode-600 temporary input file to TUF, then opens
+# an interactive SSH session so sudo can request the administrator password.
+
+readonly tuf_host=${TUF_AUTO_SUBMISSION_HOST:-tufadmin@140.238.2.242}
+readonly replay_host=${TUF_REPLAY_HOME_HOST:-kgh}
+readonly replay_env=${TUF_REPLAY_AUTO_ENV:-/home/kgh/tuf-replay-data/auto-submission/.env}
+readonly official_client_id=1dc9ff206f5301c9e7ef4ba9b209c7c7
+readonly default_trusted_user_id=670cac2c-8175-46a6-87f7-b92741d4499f
+readonly auto_submission_url=https://tufreplay-auto.impl1113.dev
+
+usage() {
+  cat <<'EOF'
+usage: tuf-send-auto-submission-config [--enable] [--trusted-user-ids uuid[,uuid...]]
+
+Reads the two existing Replay ↔ TUF tokens from the home server and prompts for
+the remote TUF sudo password. Auto-submission remains disabled unless --enable
+is passed.
+EOF
+}
+
+enabled=false
+trusted_user_ids=$default_trusted_user_id
+while (( $# > 0 )); do
+  case $1 in
+    --enable)
+      enabled=true
+      ;;
+    --trusted-user-ids)
+      [[ $# -ge 2 ]] || { usage >&2; exit 64; }
+      trusted_user_ids=$2
+      shift
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 64
+      ;;
+  esac
+  shift
+done
+
+remote_input_file=$(
+  {
+    /usr/bin/printf '%s=%s\n' TUF_AUTO_SUBMISSION_OAUTH_CLIENT_ID "$official_client_id"
+    /usr/bin/printf '%s=%s\n' AUTO_SUBMISSION_ENABLED "$enabled"
+    /usr/bin/printf '%s=%s\n' AUTO_SUBMISSION_TRUSTED_USER_IDS "$trusted_user_ids"
+    /usr/bin/printf '%s=%s\n' AUTO_SUBMISSION_API_URL "$auto_submission_url"
+    /usr/bin/ssh "$replay_host" /usr/bin/env bash -s -- "$replay_env" <<'EOF'
+set -Eeuo pipefail
+source "$1"
+/usr/bin/printf '%s=%s\n' TUF_TO_AUTO_SUBMISSION_TOKEN "$TUF_TO_AUTO_SUBMISSION_TOKEN"
+/usr/bin/printf '%s=%s\n' AUTO_SUBMISSION_TO_TUF_TOKEN "$AUTO_SUBMISSION_TO_TUF_TOKEN"
+EOF
+  } | /usr/bin/ssh "$tuf_host" \
+    'set -Eeuo pipefail; umask 077; input_file=$(/usr/bin/mktemp /tmp/tuf-auto-submission.XXXXXX); /usr/bin/cat >"$input_file"; /usr/bin/printf "%s" "$input_file"'
+)
+
+[[ $remote_input_file =~ ^/tmp/tuf-auto-submission\.[A-Za-z0-9._-]+$ ]] || {
+  echo "failed to create the protected TUF input file" >&2
+  exit 1
+}
+
+cleanup() {
+  /usr/bin/ssh "$tuf_host" /usr/bin/rm -f -- "$remote_input_file" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+echo "Enter the remote TUF sudo password to store the auto-submission configuration."
+/usr/bin/ssh -tt "$tuf_host" \
+  "sudo /srv/tuf/infra/bin/tuf-configure-auto-submission --file '$remote_input_file'"
