@@ -130,6 +130,7 @@ install_checkout() {
   install_sbin_wrapper tuf-deploy-backend
   install_sbin_wrapper tuf-deploy-frontend
   install_sbin_wrapper tuf-recreate
+  install_sbin_wrapper tuf-exec
   install_sbin_wrapper tuf-install-nginx-csp
   install_sbin_wrapper tuf-sync-infra
   install_sbin_wrapper tuf-prune-images

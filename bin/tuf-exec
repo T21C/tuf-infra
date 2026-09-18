@@ -1,0 +1,288 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Run a command inside a Compose service (default: api).
+#
+# Production backend images ship compiled JS only (no tsx, no src/*.ts).
+# `npx tsx ./src/foo.ts` / `tsx src/foo.ts` is rewritten to `node ./dist/foo.js`.
+# Extra Node processes share the running service cgroup; prefer that over
+# `compose run` so a backfill does not request a second full mem_limit.
+
+readonly SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+readonly INFRA_DIR=${TUF_INFRA_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}
+readonly ALLOWED_SERVICES=(frontend api cdn cdc health thumbnail-worker)
+
+usage() {
+  local status=${1:-64}
+  cat >&2 <<'EOF'
+usage: tuf-exec [options] [service] [--] command... [script-args...]
+
+  Wrapper options stop at the first non-option (or --). Everything after the
+  script path is forwarded unchanged to the program inside the container.
+
+  ./exec npx tsx ./src/misc/scripts/backfillRatingAccuracy.ts --after-id 0 --limit 500
+  ./exec ./src/misc/scripts/backfillRatingAccuracy.ts --dry-run
+  tuf-exec --run npx tsx ./src/misc/scripts/backfillRatingAccuracy.ts --rating-id 123
+  tuf-exec -s cdn -- node dist/externalServices/cdnService/app.js
+  tuf-exec --canary bash
+
+options:
+  --canary           canary stack env + compose overlay
+  -s, --service NAME compose service (default: api)
+  --run              compose run --rm --no-deps (new container)
+  --exec             compose exec into the running service (default)
+  --no-rewrite       do not map npx/tsx src/*.ts -> node dist/*.js
+  -n, --print        print the docker compose invocation and exit
+  -h, --help
+
+  Script --help belongs after the .ts path. ./exec --help is this wrapper.
+
+positional service:
+  if the first operand is a known service name, it is used as -s
+
+known services: frontend api cdn cdc health thumbnail-worker
+EOF
+  exit "$status"
+}
+
+is_service() {
+  local candidate=$1 name
+  for name in "${ALLOWED_SERVICES[@]}"; do
+    [[ $candidate == "$name" ]] && return 0
+  done
+  return 1
+}
+
+rewrite_ts_path() {
+  local path=$1
+  local prefix= stripped
+  stripped=$path
+  if [[ $stripped == ./* ]]; then
+    prefix=./
+    stripped=${stripped:2}
+  fi
+  if [[ $stripped == /app/src/* ]]; then
+    prefix=/app/
+    stripped=dist/${stripped#/app/src/}
+  elif [[ $stripped == src/* ]]; then
+    stripped=dist/${stripped#src/}
+  fi
+  if [[ $stripped == *.ts ]]; then
+    stripped=${stripped%.ts}.js
+  elif [[ $stripped == *.tsx ]]; then
+    stripped=${stripped%.tsx}.js
+  fi
+  printf '%s' "${prefix}${stripped}"
+}
+
+# Sets rewritten_cmd and returns 0 when argv is an npx/tsx invocation we can map.
+try_rewrite_tsx() {
+  local -a in=("$@")
+  local i=0
+
+  if (( i < ${#in[@]} )) && [[ ${in[i]} == npx ]]; then
+    i=$((i + 1))
+    while (( i < ${#in[@]} )) && [[ ${in[i]} == -y || ${in[i]} == --yes || ${in[i]} == --no-install ]]; do
+      i=$((i + 1))
+    done
+  fi
+
+  if (( i >= ${#in[@]} )) || [[ ${in[i]} != tsx ]]; then
+    return 1
+  fi
+  i=$((i + 1))
+
+  if (( i < ${#in[@]} )) && [[ ${in[i]} == -- ]]; then
+    i=$((i + 1))
+  fi
+
+  # tsx CLI flags (-e, --tsconfig, ...) are not valid node argv in the same slots.
+  if (( i < ${#in[@]} )) && [[ ${in[i]} == -* ]]; then
+    return 1
+  fi
+  if (( i >= ${#in[@]} )); then
+    return 1
+  fi
+
+  local script=${in[i]}
+  i=$((i + 1))
+  if (( i < ${#in[@]} )) && [[ ${in[i]} == -- ]]; then
+    i=$((i + 1))
+  fi
+  local mapped
+  mapped=$(rewrite_ts_path "$script")
+
+  rewritten_cmd=(node "$mapped" "${in[@]:i}")
+  echo "tuf-exec: rewrote $script -> $mapped" >&2
+  return 0
+}
+
+is_ts_script() {
+  [[ $1 == *.ts || $1 == *.tsx ]]
+}
+
+# Bare `./src/foo.ts --flag` (no npx/tsx) still maps to node dist/foo.js --flag.
+try_rewrite_ts_file() {
+  local -a in=("$@")
+  if (( ${#in[@]} == 0 )) || ! is_ts_script "${in[0]}"; then
+    return 1
+  fi
+  local mapped
+  mapped=$(rewrite_ts_path "${in[0]}")
+  local i=1
+  if (( i < ${#in[@]} )) && [[ ${in[i]} == -- ]]; then
+    i=$((i + 1))
+  fi
+  rewritten_cmd=(node "$mapped" "${in[@]:i}")
+  echo "tuf-exec: rewrote ${in[0]} -> $mapped" >&2
+  return 0
+}
+
+stack=production
+service=api
+service_from_flag=0
+mode=exec
+rewrite=1
+dry_run=0
+cmd=()
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h | --help)
+      usage 0
+      ;;
+    --canary)
+      stack=canary
+      shift
+      ;;
+    -s | --service)
+      [[ $# -ge 2 ]] || usage
+      service=$2
+      service_from_flag=1
+      shift 2
+      ;;
+    --service=*)
+      service=${1#*=}
+      service_from_flag=1
+      shift
+      ;;
+    --run)
+      mode=run
+      shift
+      ;;
+    --exec)
+      mode=exec
+      shift
+      ;;
+    --no-rewrite)
+      rewrite=0
+      shift
+      ;;
+    -n | --print)
+      dry_run=1
+      shift
+      ;;
+    --)
+      shift
+      cmd+=("$@")
+      break
+      ;;
+    -*)
+      echo "unknown option: $1" >&2
+      usage
+      ;;
+    *)
+      if (( service_from_flag == 0 )) && is_service "$1"; then
+        service=$1
+        service_from_flag=1
+        shift
+      else
+        cmd+=("$@")
+        break
+      fi
+      ;;
+  esac
+done
+
+is_service "$service" || {
+  echo "unknown service: $service (allowed: ${ALLOWED_SERVICES[*]})" >&2
+  exit 64
+}
+
+if (( ${#cmd[@]} == 0 )); then
+  cmd=(bash)
+fi
+
+exec_env=()
+env_i=0
+while (( env_i < ${#cmd[@]} )) && [[ ${cmd[env_i]} == [A-Za-z_][A-Za-z0-9_]*=* ]]; do
+  exec_env+=(-e "${cmd[env_i]}")
+  env_i=$((env_i + 1))
+done
+if (( env_i > 0 )); then
+  cmd=("${cmd[@]:env_i}")
+  if (( ${#cmd[@]} == 0 )); then
+    cmd=(bash)
+  fi
+fi
+
+if (( rewrite == 1 )); then
+  rewritten_cmd=()
+  if try_rewrite_tsx "${cmd[@]}" || try_rewrite_ts_file "${cmd[@]}"; then
+    cmd=("${rewritten_cmd[@]}")
+  fi
+fi
+
+if [[ $stack == canary ]]; then
+  readonly STACK_ENV=${TUF_CANARY_STACK_ENV:-/srv/tuf/config/canary/stack.env}
+  COMPOSE=(
+    /usr/bin/docker compose
+    --env-file "$STACK_ENV"
+    -f "$INFRA_DIR/compose.yml"
+    -f "$INFRA_DIR/compose.canary.yml"
+  )
+else
+  readonly STACK_ENV=${TUF_STACK_ENV:-/srv/tuf/config/stack.env}
+  COMPOSE=(
+    /usr/bin/docker compose
+    --env-file "$STACK_ENV"
+    -f "$INFRA_DIR/compose.yml"
+  )
+fi
+
+[[ -f $STACK_ENV ]] || {
+  echo "missing stack env: $STACK_ENV" >&2
+  exit 66
+}
+
+[[ -f $INFRA_DIR/compose.yml ]] || {
+  echo "missing compose file: $INFRA_DIR/compose.yml" >&2
+  exit 66
+}
+
+invoke=("${COMPOSE[@]}")
+if [[ $mode == run ]]; then
+  invoke+=(run --rm --no-deps)
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    invoke+=(-T)
+  fi
+else
+  invoke+=(exec)
+  if [[ -t 0 && -t 1 ]]; then
+    invoke+=(-it)
+  else
+    invoke+=(-T)
+  fi
+fi
+invoke+=("${exec_env[@]}" "$service" "${cmd[@]}")
+
+if (( dry_run == 1 )); then
+  printf '%q' "${invoke[0]}"
+  for part in "${invoke[@]:1}"; do
+    printf ' %q' "$part"
+  done
+  printf '\n'
+  exit 0
+fi
+
+exec "${invoke[@]}"
