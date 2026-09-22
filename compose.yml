@@ -58,9 +58,11 @@ services:
   api:
     <<: *backend-service
     command: ["node", "dist/app.js"]
-    # Puppeteer uses /tmp (--disable-dev-shm-usage); keep headroom under mem_limit.
+    # validateArchiveBuffer writes the zip to /tmp. The previous 512m mount filled
+    # and left a 512MiB archive-validate-*.zip behind. 16g is the mount cap.
+    # tmpfs is charged to mem_limit, so the memory cap below must cover it.
     tmpfs:
-      - /tmp:rw,nosuid,nodev,size=512m,uid=${TUF_RUNTIME_UID:-10001},gid=${TUF_RUNTIME_GID:-10001},mode=1770
+      - /tmp:rw,nosuid,nodev,size=16g,uid=${TUF_RUNTIME_UID:-10001},gid=${TUF_RUNTIME_GID:-10001},mode=1770
     environment:
       NODE_ENV: production
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-application-credentials.json
@@ -94,11 +96,12 @@ services:
       # A mapping/indexer change can require a one-time full production reindex
       # before the API starts listening. Leave several minutes even on 4 OCPU.
       start_period: 10m
-    # 24GB host: ~8GB stays outside Compose (OS, MySQL, ES, Redis, Nginx).
-    # Was 1536m; Node+Chromium+ES under load OOM-killed (exit 137). memswap_limit
-    # = mem + ~768m swap cushion (requires host swap; else equals mem_limit behavior).
-    mem_limit: 6144m
-    memswap_limit: 6912m
+    # 16g /tmp plus ~2g for the Node process. tmpfs pages count toward this cap;
+    # a 6g limit would OOM the container while the mount still looked empty.
+    # A full 16g validation will push a 24GB host into swap (ES, MySQL, CDN).
+    # memswap_limit = mem + ~768m swap cushion (requires host swap).
+    mem_limit: 18432m
+    memswap_limit: 19200m
     pids_limit: 512
 
   thumbnail-worker:
