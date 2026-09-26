@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 readonly production_dir=/srv/tuf/config
 readonly canary_dir=/srv/tuf/config/canary
-readonly names=(stack common backup redis storage api cdn cdc health thumbnail-worker)
+readonly names=(stack common backup redis storage api cdn cdc health thumbnail-worker bilibili-proxy)
 
 errors=0
 
@@ -54,6 +54,9 @@ compare_different "$production_dir/health.env" "$canary_dir/health.env" HEALTH_P
 compare_different "$production_dir/thumbnail-worker.env" "$canary_dir/thumbnail-worker.env" THUMBNAIL_WORKER_PORT
 compare_different "$production_dir/thumbnail-worker.env" "$canary_dir/thumbnail-worker.env" THUMBNAIL_QUEUE_NAME
 compare_different "$production_dir/thumbnail-worker.env" "$canary_dir/thumbnail-worker.env" THUMBNAIL_QUEUE_PREFIX
+compare_different "$production_dir/bilibili-proxy.env" "$canary_dir/bilibili-proxy.env" BILIBILI_PROXY_PORT
+compare_different "$production_dir/api.env" "$canary_dir/api.env" LOCAL_BILIBILI_PROXY_URL
+compare_different "$production_dir/health.env" "$canary_dir/health.env" HEALTH_BILIBILI_PROXY_URL
 compare_different "$production_dir/stack.env" "$canary_dir/stack.env" TUF_COMPOSE_PROJECT_NAME
 compare_different "$production_dir/stack.env" "$canary_dir/stack.env" TUF_DATA_ROOT
 compare_different "$production_dir/stack.env" "$canary_dir/stack.env" TUF_FRONTEND_HOST_PORT
@@ -81,11 +84,15 @@ require_value "$canary_dir/storage.env" PACK_CDN_ROOT /srv/tuf/data/cdn-temp/pac
 require_value "$canary_dir/health.env" LOG_PATH /tmp/tuf-health-logs
 require_value "$canary_dir/health.env" HEALTH_MAIN_SERVER_URL http://127.0.0.1:13000/v2/health
 require_value "$canary_dir/health.env" HEALTH_CDN_URL http://127.0.0.1:13001/health
+require_value "$canary_dir/health.env" HEALTH_BILIBILI_PROXY_URL http://127.0.0.1:13892/health
+require_value "$canary_dir/api.env" LOCAL_BILIBILI_PROXY_URL http://127.0.0.1:13892
 require_value "$canary_dir/thumbnail-worker.env" THUMBNAIL_WORKER_BIND_ADDRESS 127.0.0.1
 require_value "$canary_dir/thumbnail-worker.env" THUMBNAIL_WORKER_PORT 13891
 require_value "$canary_dir/thumbnail-worker.env" THUMBNAIL_WORKER_CONCURRENCY 1
 require_value "$canary_dir/thumbnail-worker.env" THUMBNAIL_JOB_INPUT_PATH /srv/tuf/data/cache/thumbnail-render-inputs
 require_value "$canary_dir/thumbnail-worker.env" THUMBNAILS_CACHE_PATH /srv/tuf/data/thumbnails
+require_value "$canary_dir/bilibili-proxy.env" BILIBILI_PROXY_BIND_ADDRESS 127.0.0.1
+require_value "$canary_dir/bilibili-proxy.env" BILIBILI_PROXY_PORT 13892
 require_value "$canary_dir/cdn.env" PACK_DOWNLOAD_MAX_CONCURRENT_JOBS 2
 require_value "$canary_dir/cdn.env" PACK_DOWNLOAD_PARALLELISM 4
 require_value "$canary_dir/cdn.env" CDN_7Z_THREADS 2
@@ -122,7 +129,8 @@ for file_and_key in \
   "$canary_dir/cdn.env:CDN_BIND_ADDRESS" \
   "$canary_dir/cdc.env:CDC_BIND_ADDRESS" \
   "$canary_dir/health.env:HEALTH_BIND_ADDRESS" \
-  "$canary_dir/thumbnail-worker.env:THUMBNAIL_WORKER_BIND_ADDRESS"; do
+  "$canary_dir/thumbnail-worker.env:THUMBNAIL_WORKER_BIND_ADDRESS" \
+  "$canary_dir/bilibili-proxy.env:BILIBILI_PROXY_BIND_ADDRESS"; do
   file=${file_and_key%%:*}
   key=${file_and_key##*:}
   [[ $(value_of "$file" "$key") == 127.0.0.1 ]] || fail "$key must be 127.0.0.1 in canary"

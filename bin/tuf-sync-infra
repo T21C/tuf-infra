@@ -109,7 +109,11 @@ EOF
 install_checkout() {
   install_env_if_missing "$INFRA_DIR/config/thumbnail-worker.env.example" \
     /srv/tuf/config/thumbnail-worker.env
+  install_env_if_missing "$INFRA_DIR/config/bilibili-proxy.env.example" \
+    /srv/tuf/config/bilibili-proxy.env
   upsert_default /srv/tuf/config/api.env THUMBNAIL_RENDER_MODE local
+  upsert_default /srv/tuf/config/api.env LOCAL_BILIBILI_PROXY_URL http://127.0.0.1:3892
+  upsert_default /srv/tuf/config/health.env HEALTH_BILIBILI_PROXY_URL http://127.0.0.1:3892/health
   upsert /srv/tuf/config/cdn.env PACK_DOWNLOAD_MAX_CONCURRENT_JOBS 2
   upsert /srv/tuf/config/cdn.env PACK_DOWNLOAD_PARALLELISM 4
   upsert /srv/tuf/config/cdn.env CDN_7Z_THREADS 2
@@ -117,7 +121,11 @@ install_checkout() {
   if [[ -d /srv/tuf/config/canary ]]; then
     install_env_if_missing "$INFRA_DIR/config/canary/thumbnail-worker.env.example" \
       /srv/tuf/config/canary/thumbnail-worker.env
+    install_env_if_missing "$INFRA_DIR/config/canary/bilibili-proxy.env.example" \
+      /srv/tuf/config/canary/bilibili-proxy.env
     upsert_default /srv/tuf/config/canary/api.env THUMBNAIL_RENDER_MODE local
+    upsert_default /srv/tuf/config/canary/api.env LOCAL_BILIBILI_PROXY_URL http://127.0.0.1:13892
+    upsert_default /srv/tuf/config/canary/health.env HEALTH_BILIBILI_PROXY_URL http://127.0.0.1:13892/health
     upsert /srv/tuf/config/canary/cdn.env PACK_DOWNLOAD_MAX_CONCURRENT_JOBS 2
     upsert /srv/tuf/config/canary/cdn.env PACK_DOWNLOAD_PARALLELISM 4
     upsert /srv/tuf/config/canary/cdn.env CDN_7Z_THREADS 2

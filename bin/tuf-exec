@@ -10,7 +10,7 @@ set -Eeuo pipefail
 
 readonly SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 readonly INFRA_DIR=${TUF_INFRA_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}
-readonly ALLOWED_SERVICES=(frontend api cdn cdc health thumbnail-worker)
+readonly ALLOWED_SERVICES=(frontend api cdn cdc health thumbnail-worker bilibili-proxy)
 
 usage() {
   local status=${1:-64}
@@ -40,7 +40,7 @@ options:
 positional service:
   if the first operand is a known service name, it is used as -s
 
-known services: frontend api cdn cdc health thumbnail-worker
+known services: frontend api cdn cdc health thumbnail-worker bilibili-proxy
 EOF
   exit "$status"
 }

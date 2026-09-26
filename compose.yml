@@ -127,6 +127,26 @@ services:
     memswap_limit: 1280m
     pids_limit: 128
 
+  bilibili-proxy:
+    <<: *backend-service
+    command: ["node", "dist/externalServices/bilibiliProxy/app.js"]
+    env_file:
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/redis.env
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/bilibili-proxy.env
+    volumes:
+      - ${TUF_DATA_ROOT:-/srv/tuf/data}/logs:/srv/tuf/data/logs
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.BILIBILI_PROXY_PORT||3892)+'/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 45s
+    cpus: 0.5
+    mem_limit: 512m
+    memswap_limit: 640m
+    pids_limit: 128
+
   cdn:
     <<: *backend-service
     command: ["node", "dist/externalServices/cdnService/app.js"]
@@ -195,6 +215,8 @@ services:
       api:
         condition: service_healthy
       cdn:
+        condition: service_healthy
+      bilibili-proxy:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.HEALTH_PORT||3883)+'/health/api').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]

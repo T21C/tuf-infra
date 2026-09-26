@@ -2,7 +2,7 @@
 
 Infrastructure configuration for The Universal Forums production environment.
 
-- `compose.yml`: Frontend, API, Thumbnail Worker, CDN, CDC, and Health containers
+- `compose.yml`: Frontend, API, Thumbnail Worker, Bilibili Proxy, CDN, CDC, and Health containers
 - `compose.canary.yml`: Isolated canary project; CDC is opt-in
 - `systemd/`: Unit for managing the Compose stack with the server lifecycle
 - `bin/`: Frontend and backend image deployment scripts
@@ -26,6 +26,7 @@ Frontend and backend images are stored in GHCR. The server pulls and runs these 
 │   ├── cdc.env
 │   ├── health.env
 │   ├── thumbnail-worker.env
+│   ├── bilibili-proxy.env
 │   ├── canary/
 │   │   ├── stack.env
 │   │   └── ...
@@ -43,7 +44,8 @@ Frontend and backend images are stored in GHCR. The server pulls and runs these 
 `tuf-sync-infra` installs `thumbnail-worker.env` from its non-secret defaults when
 the file is first introduced and adds `THUMBNAIL_RENDER_MODE=local` to an existing
 API config. Switch the production API to `queue` only after the worker healthcheck
-passes.
+passes. It also installs `bilibili-proxy.env` and adds `LOCAL_BILIBILI_PROXY_URL`
+plus `HEALTH_BILIBILI_PROXY_URL` when those keys are missing.
 
 ## Thumbnail worker rollout
 
@@ -63,6 +65,19 @@ Only after both checks pass, set `THUMBNAIL_RENDER_MODE=queue` in
 `/srv/tuf/config/api.env` and run `sudo tuf-recreate api`. Roll back without
 stopping the worker by restoring `THUMBNAIL_RENDER_MODE=local` and recreating only
 the API. HTTP render timeouts do not remove queued jobs or their spool inputs.
+
+## Bilibili proxy rollout
+
+The proxy pool, probe cron, and cover fetches run in a separate process.
+Infra sync reloads the stack, so deploy a backend image that contains
+`dist/externalServices/bilibiliProxy/app.js` first, then sync this infra
+revision. Between those two steps, Bilibili metadata and covers fail closed;
+the rest of the API stays up.
+
+```sh
+sudo tuf-recreate bilibili-proxy
+curl --fail http://127.0.0.1:3892/health
+```
 
 Environment values and credentials belong only in `/srv/tuf/config` and must not be committed to Git.
 

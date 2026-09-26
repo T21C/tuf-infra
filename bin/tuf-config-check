@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 readonly config_dir=${TUF_CONFIG_DIR:-/srv/tuf/config}
 readonly example_dir=${TUF_CONFIG_EXAMPLE_DIR:-/srv/tuf/infra/config}
-readonly config_names=(stack common backup redis storage api cdn cdc health thumbnail-worker)
+readonly config_names=(stack common backup redis storage api cdn cdc health thumbnail-worker bilibili-proxy)
 
 errors=0
 
@@ -105,6 +105,15 @@ done
 worker_port=$(value_of "$worker_env" THUMBNAIL_WORKER_PORT)
 if [[ $worker_port =~ ^[1-9][0-9]*$ ]] && (( worker_port > 65535 )); then
   fail "THUMBNAIL_WORKER_PORT must be at most 65535"
+fi
+
+bilibili_env=$config_dir/bilibili-proxy.env
+[[ $(value_of "$bilibili_env" BILIBILI_PROXY_BIND_ADDRESS) == 127.0.0.1 ]] || \
+  fail "BILIBILI_PROXY_BIND_ADDRESS must be 127.0.0.1"
+bilibili_port=$(value_of "$bilibili_env" BILIBILI_PROXY_PORT)
+[[ $bilibili_port =~ ^[1-9][0-9]*$ ]] || fail "BILIBILI_PROXY_PORT must be a positive integer"
+if [[ $bilibili_port =~ ^[1-9][0-9]*$ ]] && (( bilibili_port > 65535 )); then
+  fail "BILIBILI_PROXY_PORT must be at most 65535"
 fi
 
 for required_path in \
