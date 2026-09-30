@@ -130,6 +130,13 @@ services:
   bilibili-proxy:
     <<: *backend-service
     command: ["node", "dist/externalServices/bilibiliProxy/app.js"]
+    # No scratch workload. Keep tmpfs small so it cannot consume the cgroup (tmpfs counts toward mem_limit).
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=256m,uid=${TUF_RUNTIME_UID:-10001},gid=${TUF_RUNTIME_GID:-10001},mode=1770
+    environment:
+      NODE_ENV: production
+      # Metadata lives in Redis. Heap headroom is for in-flight HTML pages and cover waves, not a local cache.
+      NODE_OPTIONS: --max-old-space-size=384
     env_file:
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/redis.env
@@ -143,8 +150,8 @@ services:
       retries: 8
       start_period: 45s
     cpus: 0.5
-    mem_limit: 512m
-    memswap_limit: 640m
+    mem_limit: 768m
+    memswap_limit: 896m
     pids_limit: 128
 
   cdn:
