@@ -88,7 +88,7 @@ Containers use `network_mode: host` and connect to `127.0.0.1`. Do not use MySQL
 | Role | Config | Privileges |
 | --- | --- | --- |
 | API, migrate | `common.env` `DB_USER` | `ALL` on `DB_DATABASE` and `DB_LOGGING_DATABASE` |
-| Dump / restore (API `BackupService` only) | `backup.env` `BACKUP_DB_USER` | Schema `ALL` plus `SET_USER_ID` and `SYSTEM_USER` (apply dump `DEFINER`) |
+| Dump / restore (API `BackupService` only) | `backup.env` `BACKUP_DB_USER` | Schema `ALL` plus `SHOW_ROUTINE` (dump procedure and function bodies) and `SET_USER_ID` / `SYSTEM_USER` (apply dump `DEFINER`) |
 | CDN | `cdn.env` `DB_USER` (overrides common) | DML on those schemas |
 | Health | `health.env` `DB_USER` (overrides common) | DML on `DB_DATABASE` (probes + latency samples) |
 | CDC | `cdc.env` `CDC_DB_USER` | `REPLICATION SLAVE`/`CLIENT` + `SELECT` on `DB_DATABASE` |

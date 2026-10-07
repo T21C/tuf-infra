@@ -126,7 +126,7 @@ ALTER USER '$backup_user'@'127.0.0.1' IDENTIFIED BY $(sql_quote "$backup_passwor
 REVOKE ALL PRIVILEGES, GRANT OPTION FROM '$backup_user'@'127.0.0.1';
 GRANT ALL PRIVILEGES ON $app_db_ident.* TO '$backup_user'@'127.0.0.1';
 GRANT ALL PRIVILEGES ON $logging_db_ident.* TO '$backup_user'@'127.0.0.1';
-GRANT SET_USER_ID, SYSTEM_USER ON *.* TO '$backup_user'@'127.0.0.1';
+GRANT SET_USER_ID, SYSTEM_USER, SHOW_ROUTINE ON *.* TO '$backup_user'@'127.0.0.1';
 
 CREATE USER IF NOT EXISTS '$cdn_user'@'127.0.0.1' IDENTIFIED BY $(sql_quote "$cdn_password");
 ALTER USER '$cdn_user'@'127.0.0.1' IDENTIFIED BY $(sql_quote "$cdn_password");
@@ -155,7 +155,7 @@ SQL
 
 echo "MySQL roles provisioned:"
 echo "  app/migrate:        $app_user@127.0.0.1 → $app_db, $logging_db (ALL on schemas)"
-echo "  backup/restore:     $backup_user@127.0.0.1 → schema ALL + SET_USER_ID/SYSTEM_USER (dump DEFINER)"
+echo "  backup/restore:     $backup_user@127.0.0.1 → schema ALL + SHOW_ROUTINE + SET_USER_ID/SYSTEM_USER"
 echo "  cdn:                $cdn_user@127.0.0.1 → DML on $app_db, $logging_db"
 echo "  health:             $health_user@127.0.0.1 → DML on $app_db"
 echo "  cdc:                $cdc_user@127.0.0.1 → replication + SELECT on $app_db"
