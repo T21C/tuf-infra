@@ -18,7 +18,7 @@ jobs:
     concurrency:
       group: infra-ci-${{ github.workflow }}-${{ github.ref }}
       cancel-in-progress: true
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubuntu-latest"]') }}
+    runs-on: ["ARM64", "self-hosted", "tuf", "ubuntu-latest"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -99,7 +99,7 @@ jobs:
     concurrency:
       group: tuf-infra-production
       cancel-in-progress: false
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubuntu-latest"]') }}
+    runs-on: ["ARM64", "self-hosted", "tuf", "ubuntu-latest"]
     steps:
       - name: Require production deploy host
         env:

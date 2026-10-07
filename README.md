@@ -220,7 +220,7 @@ Canary data is stored separately in `/srv/tuf-canary/data`.
 
 ## CI runner failover (self-hosted ↔ ubuntu-latest)
 
-Workflows use `runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubuntu-latest"]') }}`.
+Workflows use `runs-on: ["ARM64", "self-hosted", "tuf", "ubuntu-latest"]`.
 A timer on the production host probes the laptop over Tailscale and the GitHub
 org runner API, then sets org variable `CI_RUNS_ON` to either
 `["self-hosted","linux","tuf"]` or `["ubuntu-latest"]`.
