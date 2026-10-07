@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
-# Flip GitHub Actions CI_RUNS_ON between self-hosted and ubuntu-latest based on
-# laptop/runner reachability from the production host (Tailscale).
+# Publish org/repo variable CI_RUNS_ON as exactly one runs-on label set.
+# Actions matches every label (AND) and will not fall through a mixed list.
+#
+# Preference, from the org runners API:
+#   1. online runner with every ARM64_JSON label
+#   2. online runner with every SELF_HOSTED_JSON label
+#   3. GITHUB_HOSTED_JSON (ubuntu-latest)
+# Moving down a tier waits for FAIL_STREAK_REQUIRED failures. Moving up applies
+# on the next run. Jobs already queued keep the label set they started with.
 #
 # Config: /srv/tuf/config/ci-runner-failover.env (see config/ci-runner-failover.env.example)
 set -Eeuo pipefail
@@ -35,6 +42,7 @@ load_config
 : "${RUNNER_NAME:=pop-os-sentry-host}"
 : "${TAILSCALE_HOST:=pop-os}"
 : "${TAILSCALE_IP:=100.123.141.2}"
+: "${ARM64_JSON:=[\"self-hosted\",\"linux\",\"ARM64\",\"tuf\"]}"
 : "${SELF_HOSTED_JSON:=[\"self-hosted\",\"linux\",\"tuf\"]}"
 : "${GITHUB_HOSTED_JSON:=[\"ubuntu-latest\"]}"
 : "${FAIL_STREAK_REQUIRED:=2}"
@@ -65,6 +73,23 @@ b64dec() {
 
 need_cmd curl
 need_cmd jq
+
+canonicalize_json() {
+  local name=$1 value=$2 canon
+  if ! canon=$(jq -c . <<<"$value" 2>/dev/null); then
+    echo "$name is not valid JSON: $value" >&2
+    exit 64
+  fi
+  if ! jq -e 'type == "array" and all(.[]; type == "string") and length > 0' >/dev/null <<<"$canon"; then
+    echo "$name must be a non-empty JSON array of strings: $value" >&2
+    exit 64
+  fi
+  printf -v "$name" '%s' "$canon"
+}
+
+canonicalize_json ARM64_JSON "$ARM64_JSON"
+canonicalize_json SELF_HOSTED_JSON "$SELF_HOSTED_JSON"
+canonicalize_json GITHUB_HOSTED_JSON "$GITHUB_HOSTED_JSON"
 
 if [[ -z ${GITHUB_TOKEN:-} ]]; then
   echo "GITHUB_TOKEN is unset (set in $CONFIG_FILE)" >&2
@@ -104,63 +129,130 @@ host_reachable() {
   ping -c 1 -W 2 "$TAILSCALE_IP" >/dev/null 2>&1
 }
 
-# 0 = online, 1 = offline/missing, 2 = API unauthorized/unavailable
-runner_api_status() {
-  api GET "/orgs/${GITHUB_ORG}/actions/runners?per_page=100" || true
-  case "$API_HTTP_CODE" in
-    401|403)
-      log "warn: GitHub runners API HTTP $API_HTTP_CODE (token needs org self-hosted runners read)"
+# Sets TIER to arm, self, or hosted. Return 2 when the runners API cannot be read.
+classify_runners() {
+  local page=1 combined='[]' batch count parsed
+  while (( page <= 20 )); do
+    api GET "/orgs/${GITHUB_ORG}/actions/runners?per_page=100&page=${page}" || true
+    if [[ $API_HTTP_CODE != 200 ]]; then
+      log "warn: GitHub runners API HTTP ${API_HTTP_CODE} (token needs org self-hosted runners read)"
       return 2
-      ;;
-    200) ;;
-    *)
-      log "warn: GitHub runners API HTTP ${API_HTTP_CODE}"
-      return 2
-      ;;
-  esac
-  if jq -e --arg name "$RUNNER_NAME" '
-    .runners
-    | map(select(.name == $name))
-    | length > 0 and all(.[]; .status == "online")
-  ' >/dev/null <<<"$API_BODY"; then
-    return 0
+    fi
+    batch=$(jq -c '.runners // []' <<<"$API_BODY")
+    count=$(jq -r 'length' <<<"$batch")
+    combined=$(jq -cn --argjson a "$combined" --argjson b "$batch" '$a + $b')
+    if (( count < 100 )); then
+      break
+    fi
+    page=$((page + 1))
+  done
+
+  if ! parsed=$(jq -c --argjson arm "$ARM64_JSON" --argjson self "$SELF_HOSTED_JSON" '
+    def has_all($names; $need):
+      all(($need | map(ascii_downcase))[]; . as $n | $names | index($n));
+    [
+      .[]
+      | select((.status // "" | ascii_downcase) == "online")
+      | . as $runner
+      | [($runner.labels // [])[]?.name | ascii_downcase] as $names
+      | $runner + {names: $names}
+    ] as $online
+    | {
+        arm: [$online[] | select(has_all(.names; $arm)) | .name],
+        self: [$online[] | select(has_all(.names; $self)) | .name]
+      }
+  ' <<<"$combined"); then
+    log "error: could not classify runners"
+    return 2
   fi
-  return 1
+
+  local arm_names self_names
+  arm_names=$(jq -r '.arm | join(",")' <<<"$parsed")
+  self_names=$(jq -r '.self | join(",")' <<<"$parsed")
+  if [[ -n $arm_names ]]; then
+    TIER=arm
+  elif [[ -n $self_names ]]; then
+    TIER=self
+  else
+    TIER=hosted
+  fi
+  log "api tier=$TIER arm=${arm_names:--} self=${self_names:--}"
 }
 
-healthy() {
-  if ! host_reachable; then
-    log "host unreachable ($TAILSCALE_HOST / $TAILSCALE_IP)"
-    return 1
-  fi
-  log "host reachable"
-
-  local mode=$HEALTH_MODE
-  if [[ $mode == auto ]]; then
-    mode=api
-  fi
-
+# Host ping cannot see architecture. It only distinguishes "some self-hosted" from "hosted".
+resolve_tier() {
+  local mode=$HEALTH_MODE st
   if [[ $mode == host ]]; then
+    if host_reachable; then
+      TIER=self
+      log "host mode: $RUNNER_NAME ($TAILSCALE_HOST) reachable; using any self-hosted"
+    else
+      TIER=hosted
+      log "host mode: $RUNNER_NAME unreachable ($TAILSCALE_HOST / $TAILSCALE_IP)"
+    fi
     return 0
   fi
 
-  local st
   set +e
-  runner_api_status
+  classify_runners
   st=$?
   set -e
-  case $st in
-    0) return 0 ;;
-    1) return 1 ;;
-    2)
-      if [[ $HEALTH_MODE == auto ]]; then
-        log "warn: falling back to host-only health (API unavailable)"
-        return 0
-      fi
-      return 1
+  if [[ $st -eq 0 ]]; then
+    return 0
+  fi
+
+  if [[ $mode == api ]]; then
+    TIER=hosted
+    log "api required but unavailable; treating fleet as down"
+    return 0
+  fi
+
+  if [[ $mode != auto ]]; then
+    echo "HEALTH_MODE must be auto, host, or api (got: $mode)" >&2
+    exit 64
+  fi
+
+  if host_reachable; then
+    TIER=self
+    log "api unavailable; host reachable; using any self-hosted"
+  else
+    TIER=hosted
+    log "api unavailable; host unreachable ($TAILSCALE_HOST / $TAILSCALE_IP)"
+  fi
+}
+
+rank_of_tier() {
+  case $1 in
+    arm) echo 3 ;;
+    self) echo 2 ;;
+    hosted) echo 1 ;;
+    *) echo 0 ;;
+  esac
+}
+
+tier_of_json() {
+  local value=$1
+  if [[ $value == "$ARM64_JSON" ]]; then
+    echo arm
+  elif [[ $value == "$SELF_HOSTED_JSON" ]]; then
+    echo self
+  elif [[ $value == "$GITHUB_HOSTED_JSON" ]]; then
+    echo hosted
+  else
+    echo unknown
+  fi
+}
+
+json_of_tier() {
+  case $1 in
+    arm) printf '%s' "$ARM64_JSON" ;;
+    self) printf '%s' "$SELF_HOSTED_JSON" ;;
+    hosted) printf '%s' "$GITHUB_HOSTED_JSON" ;;
+    *)
+      echo "unknown tier: $1" >&2
+      exit 64
       ;;
   esac
-  return 1
 }
 
 read_fail_streak() {
@@ -173,14 +265,16 @@ read_fail_streak() {
 
 read_prev_desired() {
   if [[ -f $STATE_FILE ]]; then
-    local b64 decoded
-    b64=$(awk -F= '/^desired_b64=/ {print $2}' "$STATE_FILE" | tail -1)
-    if decoded=$(b64dec "$b64" 2>/dev/null) && [[ -n $decoded ]]; then
+    local line b64 decoded
+    # Base64 padding contains "="; split only on the first equals sign.
+    line=$(grep -m1 '^desired_b64=' "$STATE_FILE" || true)
+    b64=${line#desired_b64=}
+    if decoded=$(b64dec "$b64" 2>/dev/null) && [[ -n $decoded ]] && decoded=$(jq -c . <<<"$decoded" 2>/dev/null); then
       printf '%s' "$decoded"
       return 0
     fi
   fi
-  printf '%s' "$SELF_HOSTED_JSON"
+  return 1
 }
 
 write_state() {
@@ -289,20 +383,31 @@ apply_value() {
   esac
 }
 
-if healthy; then
+resolve_tier
+target_rank=$(rank_of_tier "$TIER")
+if prev=$(read_prev_desired); then
+  prev_tier=$(tier_of_json "$prev")
+  prev_rank=$(rank_of_tier "$prev_tier")
+else
+  prev=
+  prev_tier=none
+  prev_rank=0
+fi
+
+if (( target_rank >= prev_rank )); then
   streak=0
-  desired=$SELF_HOSTED_JSON
-  log "health ok; prefer self-hosted"
+  desired=$(json_of_tier "$TIER")
+  log "prefer $TIER"
 else
   streak=$(read_fail_streak)
   streak=${streak:-0}
   streak=$((streak + 1))
   if ((streak >= FAIL_STREAK_REQUIRED)); then
-    desired=$GITHUB_HOSTED_JSON
-    log "health fail streak=$streak (>= $FAIL_STREAK_REQUIRED); prefer github-hosted"
+    desired=$(json_of_tier "$TIER")
+    log "downgrade streak=$streak (>= $FAIL_STREAK_REQUIRED); prefer $TIER"
   else
-    desired=$(read_prev_desired)
-    log "health fail streak=$streak (< $FAIL_STREAK_REQUIRED); holding previous ($desired)"
+    desired=$prev
+    log "downgrade streak=$streak (< $FAIL_STREAK_REQUIRED); holding $prev_tier ($desired)"
   fi
 fi
 

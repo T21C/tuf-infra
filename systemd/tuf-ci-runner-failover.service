@@ -1,5 +1,5 @@
 [Unit]
-Description=TUF CI runner failover check (self-hosted vs ubuntu-latest)
+Description=TUF CI runner failover (ARM64, then self-hosted, then ubuntu-latest)
 After=network-online.target
 Wants=network-online.target
 

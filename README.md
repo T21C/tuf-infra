@@ -218,12 +218,28 @@ Google service-account JSON file. `tuf-init` installs it under
 `/srv/tuf/config/secrets` with read access limited to root and the runtime GID.
 Canary data is stored separately in `/srv/tuf-canary/data`.
 
-## CI runner failover (self-hosted ↔ ubuntu-latest)
+## CI runner failover (ARM64, then any self-hosted, then ubuntu-latest)
 
-Workflows use `runs-on: ["ARM64", "self-hosted", "tuf", "ubuntu-latest"]`.
-A timer on the production host probes the laptop over Tailscale and the GitHub
-org runner API, then sets org variable `CI_RUNS_ON` to either
-`["self-hosted","linux","tuf"]` or `["ubuntu-latest"]`.
+Actions treats a `runs-on` array as one runner that must have every label. A
+list that mixes `ubuntu-latest` with `self-hosted` is queued on the shared
+GitHub-hosted pool and is never offered to a local runner.
+
+Workflows read a single set:
+
+```yaml
+runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","linux","ARM64","tuf"]') }}
+```
+
+A timer on the production host reads the org runners API and sets `CI_RUNS_ON`
+to the first set that has an online match:
+
+1. `["self-hosted","linux","ARM64","tuf"]` when an ARM64 `tuf` runner is online
+2. `["self-hosted","linux","tuf"]` when any other `tuf` runner is online
+3. `["ubuntu-latest"]` when none are
+
+Moving down a tier takes two consecutive failures (`FAIL_STREAK_REQUIRED`).
+Moving back up applies on the next check. A job already waiting keeps the
+label set it was queued with.
 
 One-time on **tuf-main-server** (after this repo is synced):
 
