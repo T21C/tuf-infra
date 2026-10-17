@@ -45,7 +45,10 @@ Frontend and backend images are stored in GHCR. The server pulls and runs these 
 the file is first introduced and adds `THUMBNAIL_RENDER_MODE=local` to an existing
 API config. Switch the production API to `queue` only after the worker healthcheck
 passes. It also installs `bilibili-proxy.env` and adds `LOCAL_BILIBILI_PROXY_URL`
-plus `HEALTH_BILIBILI_PROXY_URL` when those keys are missing.
+plus `HEALTH_BILIBILI_PROXY_URL` when those keys are missing. Missing level-request
+webhook keys are added empty: `RERATE_REQUEST_WEBHOOK`, `CURATION_REQUEST_WEBHOOK`,
+and `CURATION_RERATE_WEBHOOK`. Fill those Discord webhook URLs in `api.env` before
+using the request posts. The rerate webhook must target a forum or media channel.
 
 ## Thumbnail worker rollout
 
