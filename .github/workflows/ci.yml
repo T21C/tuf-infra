@@ -37,7 +37,9 @@ jobs:
           bin/tuf-canary-config-check
           bin/tuf-deploy-backend
           bin/tuf-deploy-frontend
+          bin/tuf-deploy-lib.sh
           bin/tuf-deploy-canary
+          bin/tuf-stack-reload
           bin/tuf-recreate
           bin/tuf-sync-infra
           bin/tuf-install-nginx-csp

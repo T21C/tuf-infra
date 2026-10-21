@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# ExecReload for tuf-stack.service.
+# A live deploy request reconciles only the named services. Anything else
+# (infra sync, manual reload, a stale request) reconciles the whole project.
+set -Eeuo pipefail
+
+readonly INFRA_DIR=/srv/tuf/infra
+readonly STACK_ENV=/srv/tuf/config/stack.env
+readonly REQUEST=/run/tuf/stack-reload-services
+readonly FAILURE_LOG=/run/tuf/stack-reload-last-error.txt
+readonly COMPOSE=(/usr/bin/docker compose --env-file "$STACK_ENV" -f "$INFRA_DIR/compose.yml")
+
+readonly ALLOWED_SERVICES=(frontend api cdn cdc health thumbnail-worker bilibili-proxy)
+
+is_allowed() {
+  local candidate=$1 name
+  for name in "${ALLOWED_SERVICES[@]}"; do
+    [[ $candidate == "$name" ]] && return 0
+  done
+  return 1
+}
+
+deploy_still_running() {
+  local pid=$1 cmdline
+  [[ $pid =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  [[ -r /proc/$pid/cmdline ]] || return 1
+  cmdline=$(/usr/bin/tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)
+  [[ $cmdline == *tuf-deploy-frontend* || $cmdline == *tuf-deploy-backend* ]]
+}
+
+# Honors a request only while the deploy script that wrote it is still in
+# systemctl reload. Returns 0 and fills scoped_services when the request is live.
+consume_request() {
+  local line pid="" name
+  local -a lines=() requested=()
+  scoped_services=()
+  [[ -f $REQUEST ]] || return 1
+
+  mapfile -t lines <"$REQUEST"
+  /usr/bin/rm -f "$REQUEST"
+  for line in "${lines[@]}"; do
+    [[ -n $line ]] || continue
+    if [[ -z $pid ]]; then
+      if [[ $line =~ ^pid=([0-9]+)$ ]]; then
+        pid=${BASH_REMATCH[1]}
+        continue
+      fi
+      echo "ignoring stack reload request that does not start with pid=" >&2
+      return 1
+    fi
+    requested+=("$line")
+  done
+
+  if ! deploy_still_running "$pid"; then
+    echo "ignoring stale stack reload request from pid ${pid:-unknown}" >&2
+    return 1
+  fi
+  if ((${#requested[@]} == 0)); then
+    echo "ignoring empty stack reload request from pid $pid" >&2
+    return 1
+  fi
+  for name in "${requested[@]}"; do
+    if ! is_allowed "$name"; then
+      echo "refusing stack reload request with unknown service: $name" >&2
+      exit 64
+    fi
+  done
+  scoped_services=("${requested[@]}")
+}
+
+log_failure() {
+  local heading=$1
+  shift
+  /usr/bin/install -d -m 0755 /run/tuf
+  {
+    printf '%s\n' "$heading"
+    "${COMPOSE[@]}" ps --all || true
+    "${COMPOSE[@]}" logs --no-color --tail 40 "$@" || true
+  } >"$FAILURE_LOG" 2>&1 || true
+  /usr/bin/cat "$FAILURE_LOG" >&2 || true
+}
+
+apply_scoped() {
+  local service
+  local -a primary=()
+  local include_health=0
+
+  for service in "$@"; do
+    if [[ $service == health ]]; then
+      include_health=1
+      continue
+    fi
+    primary+=("$service")
+  done
+
+  # --no-deps keeps a frontend rollout from recreating the API (and health
+  # behind it). Health is applied after the other requested services are
+  # healthy so it does not race API startup.
+  if ((${#primary[@]} > 0)); then
+    if ! "${COMPOSE[@]}" up -d --no-deps --remove-orphans --wait "${primary[@]}"; then
+      log_failure "scoped compose up failed: ${primary[*]}" "${primary[@]}"
+      return 1
+    fi
+  fi
+  if ((include_health == 1)); then
+    if ! "${COMPOSE[@]}" up -d --no-deps --remove-orphans --wait health; then
+      log_failure "scoped compose up failed: health" health
+      return 1
+    fi
+  fi
+}
+
+apply_full() {
+  if ! "${COMPOSE[@]}" up -d --remove-orphans --wait; then
+    log_failure "full compose up failed"
+    return 1
+  fi
+}
+
+/usr/bin/install -d -m 0755 /run/tuf
+/usr/bin/rm -f "$FAILURE_LOG"
+
+scoped_services=()
+if consume_request; then
+  echo "reconciling services: ${scoped_services[*]}"
+else
+  echo "reconciling full stack"
+fi
+
+if ! /srv/tuf/infra/bin/tuf-config-check >"$FAILURE_LOG" 2>&1; then
+  /usr/bin/cat "$FAILURE_LOG" >&2
+  exit 78
+fi
+/usr/bin/rm -f "$FAILURE_LOG"
+
+if ! "${COMPOSE[@]}" config --quiet >"$FAILURE_LOG" 2>&1; then
+  /usr/bin/cat "$FAILURE_LOG" >&2
+  exit 1
+fi
+/usr/bin/rm -f "$FAILURE_LOG"
+
+if ((${#scoped_services[@]} > 0)); then
+  apply_scoped "${scoped_services[@]}"
+else
+  apply_full
+fi
+
+echo "stack reload complete"

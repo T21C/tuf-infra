@@ -8,6 +8,10 @@ readonly STACK_UNIT=tuf-stack.service
 readonly COMPOSE=(/usr/bin/docker compose --env-file "$STACK_ENV" -f "$INFRA_DIR/compose.yml")
 readonly BACKEND_SERVICES=(api cdn cdc health thumbnail-worker bilibili-proxy)
 
+# shellcheck disable=SC1091
+# shellcheck source=tuf-deploy-lib.sh
+source /srv/tuf/infra/bin/tuf-deploy-lib.sh
+
 if [[ $# -ne 1 || ! $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]{6,127}$ ]]; then
   echo "usage: tuf-deploy-backend <immutable-image-tag>" >&2
   exit 64
@@ -60,7 +64,7 @@ rollback() {
     echo "rollback failed while pulling backend image $previous_tag" >&2
     return 1
   fi
-  if ! /usr/bin/systemctl reload "$STACK_UNIT"; then
+  if ! request_stack_reload "$STACK_UNIT" "${BACKEND_SERVICES[@]}"; then
     echo "rollback failed while reloading $STACK_UNIT with $previous_tag" >&2
     return 1
   fi
@@ -88,7 +92,7 @@ if ! "${COMPOSE[@]}" run --rm --no-deps migrate; then
   fail_with_rollback "database migration failed; not reloading production services"
 fi
 
-if ! /usr/bin/systemctl reload "$STACK_UNIT"; then
+if ! request_stack_reload "$STACK_UNIT" "${BACKEND_SERVICES[@]}"; then
   fail_with_rollback "$STACK_UNIT reload failed"
 fi
 

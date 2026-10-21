@@ -49,6 +49,8 @@ plus `HEALTH_BILIBILI_PROXY_URL` when those keys are missing. Missing level-requ
 webhook keys are added empty: `RERATE_REQUEST_WEBHOOK`, `CURATION_REQUEST_WEBHOOK`,
 and `CURATION_RERATE_WEBHOOK`. Fill those Discord webhook URLs in `api.env` before
 using the request posts. The rerate webhook must target a forum or media channel.
+Missing rerate-thread mention roles are also added empty: `RATING_ADVISOR_ROLE_ID`
+and `UNIVERSAL_RATER_ROLE_ID`. Fill both before new rerate threads should ping those roles.
 
 ## Thumbnail worker rollout
 
@@ -174,8 +176,12 @@ Production app deploy wrappers require `tuf-stack.service` to be both enabled
 and active before they pull images, run migrations, or change image tags. They
 exit with status `78` without changing production when the unit is not ready.
 The wrappers update tags and run migrations, but reconcile long-running
-containers only through `systemctl reload tuf-stack.service`. The unit validates
-the runtime configuration and Compose model before every start and reload.
+containers only through `systemctl reload tuf-stack.service`. That reload applies only the calling deploy's services. A frontend rollout
+replaces the frontend container, and a backend rollout replaces the API and
+its sibling services. A reload with no deploy request reconciles the whole
+stack. The unit
+validates the runtime configuration and Compose model before every start and
+reload.
 
 **One-time enablement** (root on the host), before the first Actions sync can
 succeed — allowlist the checkout paths and install wrappers:

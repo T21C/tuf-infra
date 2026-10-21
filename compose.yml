@@ -85,9 +85,9 @@ services:
       - ${TUF_DATA_ROOT:-/srv/tuf/data}/mapping-hashes:/app/mapping-hashes
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/certs/elasticsearch.crt:/run/secrets/elasticsearch-ca.crt:ro
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/secrets/google-application-credentials.json:/run/secrets/google-application-credentials.json:ro
-    depends_on:
-      frontend:
-        condition: service_healthy
+    # Frontend content is fetched per request. Do not depends_on frontend:
+    # Compose recreates dependents when that container is replaced, so a
+    # frontend rollout would restart the API and then health.
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.PROD_PORT||process.env.PORT||3000)+'/v2/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 15s
