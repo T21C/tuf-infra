@@ -47,8 +47,10 @@ API config. Switch the production API to `queue` only after the worker healthche
 passes. It also installs `bilibili-proxy.env` and adds `LOCAL_BILIBILI_PROXY_URL`
 plus `HEALTH_BILIBILI_PROXY_URL` when those keys are missing. Missing level-request
 webhook keys are added empty: `RERATE_REQUEST_WEBHOOK`, `CURATION_REQUEST_WEBHOOK`,
-and `CURATION_RERATE_WEBHOOK`. Fill those Discord webhook URLs in `api.env` before
-using the request posts. The rerate webhook must target a forum or media channel.
+`CURATION_RERATE_WEBHOOK`, `RERATE_REQ_ECHO_WEBHOOK`, `INFO_REQ_ECHO_WEBHOOK`, and
+`TAG_REQ_ECHO_WEBHOOK`. Fill those Discord webhook URLs in `api.env` before using
+the request posts. Echo URLs notify staff of new rerate, info-change, and tag
+requests. The rerate webhook must target a forum or media channel.
 Missing rerate-thread mention roles are also added empty: `RATING_ADVISOR_ROLE_ID`
 and `UNIVERSAL_RATER_ROLE_ID`. Fill both before new rerate threads should ping those roles.
 

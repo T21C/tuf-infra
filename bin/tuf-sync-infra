@@ -116,6 +116,9 @@ install_checkout() {
   upsert_default /srv/tuf/config/api.env RERATE_REQUEST_WEBHOOK ""
   upsert_default /srv/tuf/config/api.env CURATION_REQUEST_WEBHOOK ""
   upsert_default /srv/tuf/config/api.env CURATION_RERATE_WEBHOOK ""
+  upsert_default /srv/tuf/config/api.env RERATE_REQ_ECHO_WEBHOOK ""
+  upsert_default /srv/tuf/config/api.env INFO_REQ_ECHO_WEBHOOK ""
+  upsert_default /srv/tuf/config/api.env TAG_REQ_ECHO_WEBHOOK ""
   upsert_default /srv/tuf/config/api.env RATING_ADVISOR_ROLE_ID ""
   upsert_default /srv/tuf/config/api.env UNIVERSAL_RATER_ROLE_ID ""
   upsert_default /srv/tuf/config/health.env HEALTH_BILIBILI_PROXY_URL http://127.0.0.1:3892/health
@@ -133,6 +136,9 @@ install_checkout() {
     upsert_default /srv/tuf/config/canary/api.env RERATE_REQUEST_WEBHOOK ""
     upsert_default /srv/tuf/config/canary/api.env CURATION_REQUEST_WEBHOOK ""
     upsert_default /srv/tuf/config/canary/api.env CURATION_RERATE_WEBHOOK ""
+    upsert_default /srv/tuf/config/canary/api.env RERATE_REQ_ECHO_WEBHOOK ""
+    upsert_default /srv/tuf/config/canary/api.env INFO_REQ_ECHO_WEBHOOK ""
+    upsert_default /srv/tuf/config/canary/api.env TAG_REQ_ECHO_WEBHOOK ""
     upsert_default /srv/tuf/config/canary/health.env HEALTH_BILIBILI_PROXY_URL http://127.0.0.1:13892/health
     upsert /srv/tuf/config/canary/cdn.env PACK_DOWNLOAD_MAX_CONCURRENT_JOBS 2
     upsert /srv/tuf/config/canary/cdn.env PACK_DOWNLOAD_PARALLELISM 4
