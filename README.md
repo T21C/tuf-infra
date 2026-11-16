@@ -53,6 +53,9 @@ the request posts. Echo URLs notify staff of new rerate, info-change, and tag
 requests. The rerate webhook must target a forum or media channel.
 Missing rerate-thread mention roles are also added empty: `RATING_ADVISOR_ROLE_ID`
 and `UNIVERSAL_RATER_ROLE_ID`. Fill both before new rerate threads should ping those roles.
+`TOTP_ENCRYPTION_KEY` is required in `api.env` (32-byte key, base64; `openssl rand -base64 32`).
+`tuf-config-check` rejects a missing or placeholder value. Set it before syncing this revision.
+Do not rotate it after authenticator secrets exist. Canary inherits the production key.
 
 ## Thumbnail worker rollout
 
