@@ -127,6 +127,28 @@ services:
     memswap_limit: 1280m
     pids_limit: 128
 
+  badge-worker:
+    <<: *backend-service
+    command: ["node", "dist/externalServices/badgeWorker/app.js"]
+    environment:
+      NODE_ENV: production
+      # The backfill holds the public pass catalog in memory. Keep it off the API heap.
+      NODE_OPTIONS: --max-old-space-size=1536
+    env_file:
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
+    volumes:
+      - ${TUF_DATA_ROOT:-/srv/tuf/data}/logs:/srv/tuf/data/logs
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.BADGE_WORKER_PORT||3893)+'/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    cpus: 1.0
+    mem_limit: 2048m
+    memswap_limit: 2304m
+    pids_limit: 128
+
   bilibili-proxy:
     <<: *backend-service
     command: ["node", "dist/externalServices/bilibiliProxy/app.js"]
