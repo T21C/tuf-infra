@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 readonly config_dir=${TUF_CONFIG_DIR:-/srv/tuf/config}
 readonly example_dir=${TUF_CONFIG_EXAMPLE_DIR:-/srv/tuf/infra/config}
-readonly config_names=(stack common backup redis storage api cdn cdc health thumbnail-worker bilibili-proxy)
+readonly config_names=(stack common backup redis storage api cdn cdc health thumbnail-worker bilibili-proxy badge-worker)
 
 errors=0
 
@@ -114,6 +114,15 @@ bilibili_port=$(value_of "$bilibili_env" BILIBILI_PROXY_PORT)
 [[ $bilibili_port =~ ^[1-9][0-9]*$ ]] || fail "BILIBILI_PROXY_PORT must be a positive integer"
 if [[ $bilibili_port =~ ^[1-9][0-9]*$ ]] && (( bilibili_port > 65535 )); then
   fail "BILIBILI_PROXY_PORT must be at most 65535"
+fi
+
+badge_env=$config_dir/badge-worker.env
+[[ $(value_of "$badge_env" BADGE_WORKER_BIND_ADDRESS) == 127.0.0.1 ]] || \
+  fail "BADGE_WORKER_BIND_ADDRESS must be 127.0.0.1"
+badge_port=$(value_of "$badge_env" BADGE_WORKER_PORT)
+[[ $badge_port =~ ^[1-9][0-9]*$ ]] || fail "BADGE_WORKER_PORT must be a positive integer"
+if [[ $badge_port =~ ^[1-9][0-9]*$ ]] && (( badge_port > 65535 )); then
+  fail "BADGE_WORKER_PORT must be at most 65535"
 fi
 
 for required_path in \

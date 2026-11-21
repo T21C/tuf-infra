@@ -132,10 +132,13 @@ services:
     command: ["node", "dist/externalServices/badgeWorker/app.js"]
     environment:
       NODE_ENV: production
+      SENTRY_SERVER_NAME: badge-worker
       # The backfill holds the public pass catalog in memory. Keep it off the API heap.
       NODE_OPTIONS: --max-old-space-size=1536
     env_file:
       - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/common.env
+      # Canary overrides the port here so this process does not bind production's 3893.
+      - ${TUF_CONFIG_ROOT:-/srv/tuf/config}/badge-worker.env
     volumes:
       - ${TUF_DATA_ROOT:-/srv/tuf/data}/logs:/srv/tuf/data/logs
     healthcheck:

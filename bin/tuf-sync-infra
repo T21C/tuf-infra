@@ -111,6 +111,8 @@ install_checkout() {
     /srv/tuf/config/thumbnail-worker.env
   install_env_if_missing "$INFRA_DIR/config/bilibili-proxy.env.example" \
     /srv/tuf/config/bilibili-proxy.env
+  install_env_if_missing "$INFRA_DIR/config/badge-worker.env.example" \
+    /srv/tuf/config/badge-worker.env
   upsert_default /srv/tuf/config/api.env THUMBNAIL_RENDER_MODE local
   upsert_default /srv/tuf/config/api.env LOCAL_BILIBILI_PROXY_URL http://127.0.0.1:3892
   upsert_default /srv/tuf/config/api.env RERATE_REQUEST_WEBHOOK ""
@@ -131,6 +133,8 @@ install_checkout() {
       /srv/tuf/config/canary/thumbnail-worker.env
     install_env_if_missing "$INFRA_DIR/config/canary/bilibili-proxy.env.example" \
       /srv/tuf/config/canary/bilibili-proxy.env
+    install_env_if_missing "$INFRA_DIR/config/canary/badge-worker.env.example" \
+      /srv/tuf/config/canary/badge-worker.env
     upsert_default /srv/tuf/config/canary/api.env THUMBNAIL_RENDER_MODE local
     upsert_default /srv/tuf/config/canary/api.env LOCAL_BILIBILI_PROXY_URL http://127.0.0.1:13892
     upsert_default /srv/tuf/config/canary/api.env RERATE_REQUEST_WEBHOOK ""

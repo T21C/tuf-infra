@@ -2,7 +2,7 @@
 
 Infrastructure configuration for The Universal Forums production environment.
 
-- `compose.yml`: Frontend, API, Thumbnail Worker, Bilibili Proxy, CDN, CDC, and Health containers
+- `compose.yml`: Frontend, API, Thumbnail Worker, Badge Worker, Bilibili Proxy, CDN, CDC, and Health containers
 - `compose.canary.yml`: Isolated canary project; CDC is opt-in
 - `systemd/`: Unit for managing the Compose stack with the server lifecycle
 - `bin/`: Frontend and backend image deployment scripts
@@ -26,6 +26,7 @@ Frontend and backend images are stored in GHCR. The server pulls and runs these 
 │   ├── cdc.env
 │   ├── health.env
 │   ├── thumbnail-worker.env
+│   ├── badge-worker.env
 │   ├── bilibili-proxy.env
 │   ├── canary/
 │   │   ├── stack.env
@@ -44,7 +45,7 @@ Frontend and backend images are stored in GHCR. The server pulls and runs these 
 `tuf-sync-infra` installs `thumbnail-worker.env` from its non-secret defaults when
 the file is first introduced and adds `THUMBNAIL_RENDER_MODE=local` to an existing
 API config. Switch the production API to `queue` only after the worker healthcheck
-passes. It also installs `bilibili-proxy.env` and adds `LOCAL_BILIBILI_PROXY_URL`
+passes. It also installs `badge-worker.env` and `bilibili-proxy.env`, and adds `LOCAL_BILIBILI_PROXY_URL`
 plus `HEALTH_BILIBILI_PROXY_URL` when those keys are missing. Missing level-request
 webhook keys are added empty: `RERATE_REQUEST_WEBHOOK`, `CURATION_REQUEST_WEBHOOK`,
 `CURATION_RERATE_WEBHOOK`, `RERATE_REQ_ECHO_WEBHOOK`, `INFO_REQ_ECHO_WEBHOOK`, and
@@ -88,6 +89,23 @@ the rest of the API stays up.
 sudo tuf-recreate bilibili-proxy
 curl --fail http://127.0.0.1:3892/health
 ```
+
+## Badge worker rollout
+
+Badge backfill runs in its own process. The API only enqueues jobs. Infra sync
+reloads the stack, so deploy a backend image that contains
+`dist/externalServices/badgeWorker/app.js` first, then sync this infra revision.
+Sync installs `badge-worker.env` (port 3893, canary 13893) and starts the
+container from the image already on the host. Until that container is healthy,
+queued badge jobs sit in `badge_jobs`.
+
+```sh
+sudo tuf-recreate badge-worker
+curl --fail http://127.0.0.1:3893/health
+```
+
+Canary listens on `127.0.0.1:13893`. Both stacks use host networking, so those
+ports must stay distinct.
 
 Environment values and credentials belong only in `/srv/tuf/config` and must not be committed to Git.
 

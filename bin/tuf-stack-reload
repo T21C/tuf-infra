@@ -10,7 +10,7 @@ readonly REQUEST=/run/tuf/stack-reload-services
 readonly FAILURE_LOG=/run/tuf/stack-reload-last-error.txt
 readonly COMPOSE=(/usr/bin/docker compose --env-file "$STACK_ENV" -f "$INFRA_DIR/compose.yml")
 
-readonly ALLOWED_SERVICES=(frontend api cdn cdc health thumbnail-worker bilibili-proxy)
+readonly ALLOWED_SERVICES=(frontend api cdn cdc health thumbnail-worker badge-worker bilibili-proxy)
 
 is_allowed() {
   local candidate=$1 name
