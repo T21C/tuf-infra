@@ -148,8 +148,8 @@ services:
       retries: 8
       start_period: 30s
     cpus: 1.0
-    mem_limit: 2048m
-    memswap_limit: 2304m
+    mem_limit: 4096m
+    memswap_limit: 4096m
     pids_limit: 128
 
   bilibili-proxy:
